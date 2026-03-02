@@ -1,5 +1,7 @@
 # md2anki
 
+English version: [README_en.md](README_en.md)
+
 将 Obsidian 风格 Markdown（以 `####` 为卡片）同步到 Anki 的轻量工具。
 
 当前发布基线：`v0.1.0`
