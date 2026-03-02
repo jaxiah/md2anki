@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "md2anki"
+version = "0.1.0"
+description = "Refactored md2anki workflow package"
+readme = "refactor_design.md"
+requires-python = ">=3.10"
+dependencies = [
+  "markdown-it-py>=3.0.0",
+  "mdit-py-plugins>=0.4.0",
+  "PyYAML>=6.0",
+  "requests>=2.31.0",
+]
+
+[project.optional-dependencies]
+test = ["pytest>=8.0"]
+
+[project.scripts]
+md2anki = "md2anki.cli:main"
+
+[tool.setuptools]
+packages = ["md2anki"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+markers = [
+  "e2e_manual: real Anki manual E2E tests, opt-in via MD2ANKI_E2E=1",
+]

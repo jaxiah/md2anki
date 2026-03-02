@@ -1,0 +1,8 @@
+__pycache__/
+_parsed_note_json/
+_rendered_note_html/
+.pytest_tmp/
+*egg-info/
+manual_vault/
+.venv/
+.vscode/
