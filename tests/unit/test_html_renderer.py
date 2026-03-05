@@ -91,7 +91,9 @@ def test_basic_markdown_render_and_footer_with_block_id(tmp_path: Path):
 
     assert "<strong>Front</strong>" in rendered.front_html
     assert "Back text" in rendered.back_html
-    assert "Jump to Parent" in rendered.back_html_with_footer
+    assert ">Parent<" in rendered.back_html_with_footer
+    assert "Jump to" not in rendered.back_html_with_footer
+    assert "font-size:0.85em" in rendered.back_html_with_footer
     assert "file=folder/a%23%5Eid-a1b2c3d4" in rendered.back_html_with_footer
 
 

@@ -48,7 +48,7 @@ Answer
     doc = _parse_case("parse_skips_when_ankideck_missing", content)
 
     assert doc.notes == []
-    assert "missing ankideck" in doc.warnings
+    assert doc.warnings == []
 
 
 def test_parse_h3_h4_and_separator():
@@ -167,7 +167,6 @@ A
 
     assert len(doc.notes) == 0
     assert any(msg.startswith("YAML parse error:") for msg in doc.warnings)
-    assert "missing ankideck" in doc.warnings
 
 
 def test_separator_with_spaces_is_recognized():

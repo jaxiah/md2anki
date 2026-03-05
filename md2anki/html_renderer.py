@@ -53,7 +53,10 @@ class HtmlRenderer:
 
         parent_url = self._build_parent_url(note)
         parent_label = note.parent_title or Path(note.source_file).stem
-        footer = f'\n<div class="md2anki-parent"><a href="{parent_url}">Jump to {html.escape(parent_label)}</a></div>'
+        footer = (
+            '\n<div class="md2anki-parent" style="margin-top:8px; font-size:0.85em; opacity:0.75;">'
+            f'<a href="{parent_url}">{html.escape(parent_label)}</a></div>'
+        )
         back_html_with_footer = f"{back_html}{footer}"
 
         return RenderedNote(

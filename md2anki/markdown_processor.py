@@ -231,7 +231,6 @@ class MarkdownProcessor:
 
         anki_deck_base = (frontmatter or {}).get("ankideck")
         if not anki_deck_base:
-            warnings.append("missing ankideck")
             return ParsedDocument(source_file=source_rel, frontmatter=frontmatter, notes=[], warnings=warnings)
 
         # 始终维护“最近父节点”上下文：H3 > H2 > H1。
