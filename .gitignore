@@ -1,6 +1,7 @@
 __pycache__/
 _parsed_note_json/
 _rendered_note_html/
+_parser_renderer_debug/
 .pytest_tmp/
 *egg-info/
 manual_vault/
