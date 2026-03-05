@@ -24,7 +24,7 @@ REM 不依赖 pip install -e .：直接通过 PYTHONPATH 指向项目源码
 set "PYTHONPATH=%PROJECT_ROOT%;%PYTHONPATH%"
 
 REM 默认 dry-run；你也可以双击外加参数（例如 --file "A/B.md"）
-"%PYTHON_EXE%" -m md2anki --vault-root "%VAULT_ROOT%" %*
+"%PYTHON_EXE%" -m md2anki --vault-root "%VAULT_ROOT%" --show-progress %*
 set "EXIT_CODE=%ERRORLEVEL%"
 
 echo [md2anki-launcher] exit-code=%EXIT_CODE%
