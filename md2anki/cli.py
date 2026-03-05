@@ -28,6 +28,34 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--asset-root", default="assets", help="Asset root under vault")
     parser.add_argument("--anki-connect-url", default="http://127.0.0.1:8765", help="AnkiConnect URL")
     parser.add_argument(
+        "--request-timeout-seconds",
+        type=float,
+        default=30.0,
+        help="Timeout for each AnkiConnect request in seconds.",
+    )
+    parser.add_argument(
+        "--max-retries",
+        type=int,
+        default=2,
+        help="Retry count for transient AnkiConnect failures.",
+    )
+    parser.add_argument(
+        "--retry-backoff-seconds",
+        type=float,
+        default=0.75,
+        help="Base exponential backoff seconds between retries.",
+    )
+    parser.add_argument(
+        "--no-fail-fast",
+        action="store_true",
+        help="Continue syncing remaining notes after a note failure.",
+    )
+    parser.add_argument(
+        "--show-progress",
+        action="store_true",
+        help="Show per-stage progress for parse/media/sync.",
+    )
+    parser.add_argument(
         "--sync-state-file",
         default=None,
         help="Sync state file path, default <vault_root>/sync_state.json",
@@ -72,6 +100,11 @@ def main(argv: list[str] | None = None) -> int:
         sync_state_file=sync_state_file,
         apply_anki_changes=args.apply_anki_changes,
         write_back_markdown=not args.no_write_back_markdown,
+        request_timeout_seconds=args.request_timeout_seconds,
+        max_retries=args.max_retries,
+        retry_backoff_seconds=args.retry_backoff_seconds,
+        fail_fast=not args.no_fail_fast,
+        show_progress=args.show_progress,
     )
 
     mode = "apply" if args.apply_anki_changes else "dry-run"

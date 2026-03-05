@@ -31,6 +31,11 @@ def run_pipeline(
     sync_state_file: Path | None = None,
     apply_anki_changes: bool = False,
     write_back_markdown: bool = True,
+    request_timeout_seconds: float = 30.0,
+    max_retries: int = 2,
+    retry_backoff_seconds: float = 0.75,
+    fail_fast: bool = True,
+    show_progress: bool = False,
     processor: MarkdownProcessor | None = None,
     renderer: HtmlRenderer | None = None,
     anki_client: AnkiClient | None = None,
@@ -46,6 +51,10 @@ def run_pipeline(
         anki_connect_url=anki_connect_url,
         sync_state_file=state_file,
         apply_changes=apply_anki_changes,
+        request_timeout_seconds=request_timeout_seconds,
+        max_retries=max_retries,
+        retry_backoff_seconds=retry_backoff_seconds,
+        fail_fast=fail_fast,
     )
 
     parsed_docs = []
@@ -53,18 +62,32 @@ def run_pipeline(
     report = PipelineReport()
     writeback_files_seen: set[str] = set()
 
+    def _emit_progress(stage: str, current: int, total: int, name: str | None = None, status: str | None = None) -> None:
+        if not show_progress:
+            return
+        remaining = max(total - current, 0)
+        suffix = ""
+        if name:
+            suffix += f" item={name}"
+        if status:
+            suffix += f" status={status}"
+        print(f"[md2anki][progress] stage={stage} current={current}/{total} remaining={remaining}{suffix}")
+
     def _record_writeback(source_file: str) -> None:
         if source_file not in writeback_files_seen:
             writeback_files_seen.add(source_file)
             report.markdown_writebacks.append(source_file)
 
-    for markdown_file in markdown_files:
+    total_files = len(markdown_files)
+
+    for file_index, markdown_file in enumerate(markdown_files, start=1):
         # 支持相对路径输入，统一转为 vault_root 下绝对路径处理。
         abs_file = Path(markdown_file)
         if not abs_file.is_absolute():
             abs_file = vault_root / abs_file
         doc = processor.parse_file(abs_file)
         parsed_docs.append(doc)
+        _emit_progress("parse", file_index, total_files, doc.source_file, "parsed")
 
         if write_back_markdown and apply_anki_changes:
             # 先确保父节点 block id 落地，再进行渲染与 hash 计算，避免首轮后续出现“全量 update”。
@@ -131,9 +154,23 @@ def run_pipeline(
                 )
                 continue
 
-            rendered_payloads.append(renderer.render(note))
+            rendered = renderer.render(note)
+            if rendered.warnings:
+                report.errors.extend(rendered.warnings)
+            rendered_payloads.append(rendered)
 
-    sync_result = anki_client.sync(rendered_payloads)
+    if apply_anki_changes:
+        prewarm_result = anki_client.prewarm_media(rendered_payloads, progress_callback=_emit_progress)
+        report.failed += prewarm_result.failed
+        report.errors.extend(prewarm_result.errors)
+        if prewarm_result.failed > 0 and fail_fast:
+            return report
+
+    sync_result = anki_client.sync(
+        rendered_payloads,
+        progress_callback=_emit_progress,
+        skip_media_upload=apply_anki_changes,
+    )
 
     report.added += sync_result.added
     report.updated += sync_result.updated

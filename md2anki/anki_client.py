@@ -1,5 +1,6 @@
 import hashlib
 import json
+import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -23,6 +24,14 @@ class SyncResult:
     dry_run_actions: list[dict[str, Any]] = field(default_factory=list)
 
 
+@dataclass
+class PrewarmResult:
+    attempted: int = 0
+    uploaded: int = 0
+    failed: int = 0
+    errors: list[str] = field(default_factory=list)
+
+
 class AnkiClient:
     """封装 AnkiConnect 与 sync_state 管理。
 
@@ -31,12 +40,26 @@ class AnkiClient:
     - sync_state 仅按 anki_note_id 跟踪已创建卡片。
     """
 
-    def __init__(self, anki_connect_url: str, sync_state_file: Path, apply_changes: bool = False):
+    def __init__(
+        self,
+        anki_connect_url: str,
+        sync_state_file: Path,
+        apply_changes: bool = False,
+        request_timeout_seconds: float = 30.0,
+        max_retries: int = 2,
+        retry_backoff_seconds: float = 0.75,
+        fail_fast: bool = True,
+    ):
         self.anki_connect_url = anki_connect_url
         self.sync_state_file = Path(sync_state_file)
         self.apply_changes = apply_changes
+        self.request_timeout_seconds = request_timeout_seconds
+        self.max_retries = max(0, int(max_retries))
+        self.retry_backoff_seconds = max(0.0, float(retry_backoff_seconds))
+        self.fail_fast = fail_fast
         self.state = self.load_state()
         self.deck_cache = self.load_deck_cache()
+        self._uploaded_media_keys: set[tuple[str, str]] = set()
 
     def is_dry_run(self) -> bool:
         return not self.apply_changes
@@ -71,20 +94,36 @@ class AnkiClient:
             return True, None
 
         payload = {"action": action, "version": 6, "params": params}
-        try:
-            response = requests.post(
-                self.anki_connect_url,
-                json=payload,
-                timeout=15,
-                proxies={"http": None, "https": None},
-            )
-            response.raise_for_status()
-            data = response.json()
-            if data.get("error"):
-                return False, data.get("error")
-            return True, data.get("result")
-        except Exception as exc:
-            return False, str(exc)
+        max_attempts = self.max_retries + 1
+
+        for attempt in range(max_attempts):
+            try:
+                response = requests.post(
+                    self.anki_connect_url,
+                    json=payload,
+                    timeout=self.request_timeout_seconds,
+                    proxies={"http": None, "https": None},
+                )
+                response.raise_for_status()
+                data = response.json()
+                if data.get("error"):
+                    return False, data.get("error")
+                return True, data.get("result")
+            except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as exc:
+                if attempt >= max_attempts - 1:
+                    return False, str(exc)
+            except requests.exceptions.HTTPError as exc:
+                status_code = exc.response.status_code if exc.response is not None else None
+                if status_code is None or status_code < 500 or attempt >= max_attempts - 1:
+                    return False, str(exc)
+            except Exception as exc:
+                return False, str(exc)
+
+            backoff_seconds = self.retry_backoff_seconds * (2**attempt)
+            if backoff_seconds > 0:
+                time.sleep(backoff_seconds)
+
+        return False, f"invoke failed after {max_attempts} attempts: {action}"
 
     def load_deck_cache(self) -> set[str]:
         # apply 模式下预热 deck 列表，减少重复 createDeck 调用。
@@ -124,13 +163,100 @@ class AnkiClient:
             return True, None
         return False, str(result)
 
-    def sync(self, rendered_notes):
+    @staticmethod
+    def _looks_like_timeout(error: Any) -> bool:
+        message = str(error).lower()
+        return "timed out" in message or "timeout" in message
+
+    def _verify_media_uploaded(self, filename: str) -> bool:
+        ok, result = self.invoke("retrieveMediaFile", filename=filename)
+        if not ok:
+            return False
+        return bool(result)
+
+    def _store_media(self, media: Any) -> tuple[bool, str | None, str]:
+        filename = getattr(media, "filename", None)
+        if not filename:
+            return False, "missing media filename", "failed"
+
+        path_error: Any = None
+        abs_path = getattr(media, "abs_path", None)
+        if abs_path:
+            ok, result = self.invoke("storeMediaFile", filename=filename, path=abs_path)
+            if ok:
+                return True, None, "uploaded(path)"
+            path_error = result
+            if self._looks_like_timeout(result) and self._verify_media_uploaded(filename):
+                return True, None, "uploaded(verified)"
+
+        data_payload = getattr(media, "base64_data", None)
+        if data_payload:
+            ok, result = self.invoke("storeMediaFile", filename=filename, data=data_payload)
+            if ok:
+                return True, None, "uploaded(data)"
+            if self._looks_like_timeout(result) and self._verify_media_uploaded(filename):
+                return True, None, "uploaded(verified)"
+            if path_error is not None:
+                return False, f"path={path_error}; data={result}", "failed"
+            return False, str(result), "failed"
+
+        if path_error is not None:
+            return False, str(path_error), "failed"
+        return False, "missing media path and base64 payload", "failed"
+
+    def _collect_unique_media(self, rendered_notes) -> list[Any]:
+        unique_media: list[Any] = []
+        seen: set[tuple[str, str]] = set()
+        for rendered in rendered_notes:
+            for media in getattr(rendered, "media_files", []):
+                key = (media.filename, media.base64_data)
+                if key in seen:
+                    continue
+                seen.add(key)
+                unique_media.append(media)
+        return unique_media
+
+    def prewarm_media(self, rendered_notes, progress_callback=None) -> PrewarmResult:
+        result = PrewarmResult()
+        if self.is_dry_run():
+            return result
+
+        unique_media = self._collect_unique_media(rendered_notes)
+        total = len(unique_media)
+
+        for index, media in enumerate(unique_media, start=1):
+            media_key = (media.filename, media.base64_data)
+            if media_key in self._uploaded_media_keys:
+                if progress_callback:
+                    progress_callback("media", index, total, media.filename, "cached")
+                continue
+
+            result.attempted += 1
+            media_ok, media_err, media_status = self._store_media(media)
+            if not media_ok:
+                result.failed += 1
+                result.errors.append(f"storeMediaFile failed for {media.filename}: {media_err}")
+                if progress_callback:
+                    progress_callback("media", index, total, media.filename, media_status)
+                if self.fail_fast:
+                    break
+                continue
+
+            self._uploaded_media_keys.add(media_key)
+            result.uploaded += 1
+            if progress_callback:
+                progress_callback("media", index, total, media.filename, media_status)
+
+        return result
+
+    def sync(self, rendered_notes, progress_callback=None, skip_media_upload: bool = False):
         # 单条失败不终止全局；统一聚合到 SyncResult。
         result = SyncResult()
         items = self.state.setdefault("items", {})
         state_changed = False
+        total_notes = len(rendered_notes)
 
-        for rendered in rendered_notes:
+        for index, rendered in enumerate(rendered_notes, start=1):
             parsed = rendered.parsed
             note_id = getattr(parsed, "anki_note_id", None)
 
@@ -144,6 +270,8 @@ class AnkiClient:
                         "line_idx_h4": getattr(parsed, "line_idx_h4", None),
                     }
                 )
+                if progress_callback:
+                    progress_callback("sync", index, total_notes, getattr(parsed, "h4_heading_pure", None), "skip_noanki")
                 continue
 
             if getattr(parsed, "delete_requested", False):
@@ -151,6 +279,10 @@ class AnkiClient:
                 if not note_id:
                     result.failed += 1
                     result.errors.append(f"delete requested but missing anki_note_id for {getattr(parsed, 'source_file', '<unknown>')}")
+                    if progress_callback:
+                        progress_callback("sync", index, total_notes, getattr(parsed, "h4_heading_pure", None), "delete_failed")
+                    if self.fail_fast:
+                        break
                     continue
 
                 if self.is_dry_run():
@@ -162,12 +294,18 @@ class AnkiClient:
                             "line_idx_h4": getattr(parsed, "line_idx_h4", None),
                         }
                     )
+                    if progress_callback:
+                        progress_callback("sync", index, total_notes, getattr(parsed, "h4_heading_pure", None), "would_delete")
                     continue
 
                 success, err = self.delete_note(note_id)
                 if not success:
                     result.failed += 1
                     result.errors.append(f"delete failed for ^anki-{note_id}: {err}")
+                    if progress_callback:
+                        progress_callback("sync", index, total_notes, getattr(parsed, "h4_heading_pure", None), "delete_failed")
+                    if self.fail_fast:
+                        break
                     continue
 
                 result.deleted += 1
@@ -181,6 +319,8 @@ class AnkiClient:
                         "anki_note_id": note_id,
                     }
                 )
+                if progress_callback:
+                    progress_callback("sync", index, total_notes, getattr(parsed, "h4_heading_pure", None), "deleted")
                 continue
 
             content_hash = self.compute_content_hash(rendered)
@@ -188,6 +328,8 @@ class AnkiClient:
             if note_id and note_id in items and items[note_id].get("content_hash") == content_hash:
                 # 已存在且内容未变化，直接跳过。
                 result.skipped += 1
+                if progress_callback:
+                    progress_callback("sync", index, total_notes, getattr(parsed, "h4_heading_pure", None), "skip_unchanged")
                 continue
 
             if self.is_dry_run():
@@ -199,24 +341,40 @@ class AnkiClient:
                         "line_idx_h4": getattr(parsed, "line_idx_h4", None),
                     }
                 )
+                if progress_callback:
+                    action = "would_update" if note_id else "would_add"
+                    progress_callback("sync", index, total_notes, getattr(parsed, "h4_heading_pure", None), action)
                 continue
 
             if not self.ensure_deck(getattr(parsed, "deck_full", None)):
                 result.failed += 1
                 result.errors.append(f"ensure deck failed for {getattr(parsed, 'deck_full', '<none>')} ({getattr(parsed, 'source_file', '<unknown>')})")
+                if progress_callback:
+                    progress_callback("sync", index, total_notes, getattr(parsed, "h4_heading_pure", None), "deck_failed")
+                if self.fail_fast:
+                    break
                 continue
 
-            media_failed = False
-            for media in rendered.media_files:
-                # 媒体任一失败则该 note 终止，避免字段与媒体不一致。
-                media_ok, media_err = self.invoke("storeMediaFile", filename=media.filename, data=media.base64_data)
-                if not media_ok:
-                    result.failed += 1
-                    result.errors.append(f"storeMediaFile failed for {media.filename}: {media_err}")
-                    media_failed = True
-                    break
-            if media_failed:
-                continue
+            if not skip_media_upload:
+                media_failed = False
+                for media in rendered.media_files:
+                    # 媒体任一失败则该 note 终止，避免字段与媒体不一致。
+                    media_key = (media.filename, media.base64_data)
+                    if media_key in self._uploaded_media_keys:
+                        continue
+                    media_ok, media_err, _ = self._store_media(media)
+                    if not media_ok:
+                        result.failed += 1
+                        result.errors.append(f"storeMediaFile failed for {media.filename}: {media_err}")
+                        media_failed = True
+                        break
+                    self._uploaded_media_keys.add(media_key)
+                if media_failed:
+                    if progress_callback:
+                        progress_callback("sync", index, total_notes, getattr(parsed, "h4_heading_pure", None), "media_failed")
+                    if self.fail_fast:
+                        break
+                    continue
 
             if note_id:
                 update_ok, update_err = self.invoke(
@@ -232,6 +390,10 @@ class AnkiClient:
                 if not update_ok:
                     result.failed += 1
                     result.errors.append(f"update failed for ^anki-{note_id}: {update_err}")
+                    if progress_callback:
+                        progress_callback("sync", index, total_notes, getattr(parsed, "h4_heading_pure", None), "update_failed")
+                    if self.fail_fast:
+                        break
                     continue
                 result.updated += 1
                 items[note_id] = {
@@ -241,6 +403,8 @@ class AnkiClient:
                     "h4_heading_pure": getattr(parsed, "h4_heading_pure", None),
                 }
                 state_changed = True
+                if progress_callback:
+                    progress_callback("sync", index, total_notes, getattr(parsed, "h4_heading_pure", None), "updated")
                 continue
 
             add_ok, add_result = self.invoke(
@@ -259,6 +423,10 @@ class AnkiClient:
             if not add_ok or add_result is None:
                 result.failed += 1
                 result.errors.append(f"addNote failed for {getattr(parsed, 'h4_heading_pure', '<unknown>')}: {add_result}")
+                if progress_callback:
+                    progress_callback("sync", index, total_notes, getattr(parsed, "h4_heading_pure", None), "add_failed")
+                if self.fail_fast:
+                    break
                 continue
 
             new_note_id = str(add_result)
@@ -277,6 +445,8 @@ class AnkiClient:
                 }
             )
             state_changed = True
+            if progress_callback:
+                progress_callback("sync", index, total_notes, getattr(parsed, "h4_heading_pure", None), "added")
 
         if state_changed and not self.is_dry_run():
             self.save_state()

@@ -25,6 +25,11 @@ def test_cli_defaults_to_dry_run_and_collects_files(tmp_path: Path, monkeypatch)
     assert captured["write_back_markdown"] is True
     assert len(captured["markdown_files"]) == 2
     assert captured["vault_name"] == vault.name
+    assert captured["request_timeout_seconds"] == 30.0
+    assert captured["max_retries"] == 2
+    assert captured["retry_backoff_seconds"] == 0.75
+    assert captured["fail_fast"] is True
+    assert captured["show_progress"] is False
 
 
 def test_cli_apply_mode_with_explicit_file(tmp_path: Path, monkeypatch):
@@ -49,6 +54,14 @@ def test_cli_apply_mode_with_explicit_file(tmp_path: Path, monkeypatch):
             "only.md",
             "--apply-anki-changes",
             "--no-write-back-markdown",
+            "--request-timeout-seconds",
+            "45",
+            "--max-retries",
+            "4",
+            "--retry-backoff-seconds",
+            "1.5",
+            "--no-fail-fast",
+            "--show-progress",
         ]
     )
 
@@ -57,3 +70,8 @@ def test_cli_apply_mode_with_explicit_file(tmp_path: Path, monkeypatch):
     assert captured["write_back_markdown"] is False
     assert captured["markdown_files"] == [target]
     assert captured["vault_name"] == vault.name
+    assert captured["request_timeout_seconds"] == 45.0
+    assert captured["max_retries"] == 4
+    assert captured["retry_backoff_seconds"] == 1.5
+    assert captured["fail_fast"] is False
+    assert captured["show_progress"] is True

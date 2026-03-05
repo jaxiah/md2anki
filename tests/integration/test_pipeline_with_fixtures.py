@@ -487,3 +487,52 @@ Body B1
     assert "#### QA2\n^anki-9302\n" in updated
     assert "#### QB1\n^anki-9303\n" in updated
     assert report.added == 3
+
+
+def test_pipeline_media_prewarm_failure_stops_before_note_sync(tmp_path: Path):
+    vault_root = tmp_path / "vault"
+    vault_root.mkdir(parents=True, exist_ok=True)
+    (vault_root / "assets").mkdir(parents=True, exist_ok=True)
+    (vault_root / "assets" / "x.png").write_bytes(b"png")
+
+    md_file = vault_root / "10_media_fail.md"
+    md_file.write_text(
+        """---
+ankideck: DeckA
+---
+### Parent
+#### Card
+![[x.png]]
+""",
+        encoding="utf-8",
+    )
+
+    client = _make_client(tmp_path, apply_changes=True)
+    calls: list[str] = []
+
+    def _invoke(action, **params):
+        calls.append(action)
+        if action == "createDeck":
+            return True, None
+        if action == "storeMediaFile":
+            return False, "simulated media failure"
+        if action == "addNote":
+            return True, 9999
+        raise AssertionError(f"unexpected action: {action}")
+
+    client.invoke = _invoke
+
+    report = run_pipeline(
+        markdown_files=[md_file],
+        vault_root=vault_root,
+        vault_name="sample-notes",
+        sync_state_file=tmp_path / "sync_state.json",
+        apply_anki_changes=True,
+        write_back_markdown=True,
+        anki_client=client,
+    )
+
+    assert report.failed == 1
+    assert report.added == 0
+    assert any("storeMediaFile failed" in err for err in report.errors)
+    assert calls.count("addNote") == 0
