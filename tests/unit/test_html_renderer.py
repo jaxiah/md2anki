@@ -231,3 +231,26 @@ def test_math_delimiters_inside_fenced_code_remain_untouched(tmp_path: Path):
     assert "\\(E=mc^2\\)" in rendered.front_html
     assert "$E=mc^2$" in rendered.front_html
     assert "$$x^2 + 1$$" in rendered.front_html
+
+
+def test_multiline_display_math_preserves_backslashes(tmp_path: Path):
+    renderer = _new_renderer(tmp_path)
+    note = FakeParsedNote(
+        source_file="x.md",
+        front_md="""$$
+\\begin{aligned}
+&A+A'\\cdot B\\\\
+=&A+A\\cdot B+A'\\cdot B \\\\
+=&A+(A+A')\\cdot B \\\\
+=&A+B
+\\end{aligned}
+$$""",
+        back_md="ok",
+    )
+
+    rendered = _render_case("multiline_display_math_preserves_backslashes", renderer, note)
+
+    assert "\\[" in rendered.front_html
+    assert "\\begin{aligned}" in rendered.front_html
+    assert "\\end{aligned}" in rendered.front_html
+    assert "\\\\" in rendered.front_html

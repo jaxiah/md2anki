@@ -114,9 +114,55 @@ class HtmlRenderer:
             return f'<a href="{url}">{html.escape(alias)}</a>'
 
         text_with_links = RE_WIKI_LINK.sub(replace_link, text_with_images)
-        text_normalized_math = self._normalize_math_delimiters(text_with_links)
+        text_with_display_tokens, display_math_map = self._protect_display_math_blocks(text_with_links)
+        text_normalized_math = self._normalize_math_delimiters(text_with_display_tokens)
         html_content = self.md.render(text_normalized_math)
+        html_content = self._restore_display_math_blocks(html_content, display_math_map)
         return html_content, media_payloads, warnings
+
+    def _protect_display_math_blocks(self, text: str) -> tuple[str, dict[str, str]]:
+        # 对显示公式做 token 保护，避免 markdown-it 改写 LaTeX 反斜杠。
+        display_math_map: dict[str, str] = {}
+        segments: list[str] = []
+        last = 0
+        token_index = 0
+
+        for fenced_match in RE_FENCED_CODE_BLOCK.finditer(text):
+            normal_part = text[last : fenced_match.start()]
+            replaced, token_index = self._replace_display_math_tokens(normal_part, display_math_map, token_index)
+            segments.append(replaced)
+            segments.append(fenced_match.group(0))
+            last = fenced_match.end()
+
+        tail_replaced, _ = self._replace_display_math_tokens(text[last:], display_math_map, token_index)
+        segments.append(tail_replaced)
+        return "".join(segments), display_math_map
+
+    @staticmethod
+    def _replace_display_math_tokens(
+        text: str,
+        display_math_map: dict[str, str],
+        token_index: int,
+    ) -> tuple[str, int]:
+        def repl(match: re.Match) -> str:
+            nonlocal token_index
+            token = f"MD2ANKI_DISPLAY_MATH_{token_index}"
+            token_index += 1
+            raw_math = match.group(1)
+            display_math_map[token] = f"\\[{raw_math}\\]"
+            return f"\n{token}\n"
+
+        replaced = RE_DISPLAY_MATH.sub(repl, text)
+        return replaced, token_index
+
+    @staticmethod
+    def _restore_display_math_blocks(html_content: str, display_math_map: dict[str, str]) -> str:
+        for token, display_math in display_math_map.items():
+            escaped = html.escape(display_math)
+            html_content = html_content.replace(f"<p>{token}</p>\n", f"<p>{escaped}</p>\n")
+            html_content = html_content.replace(f"<p>{token}</p>", f"<p>{escaped}</p>")
+            html_content = html_content.replace(token, escaped)
+        return html_content
 
     def _normalize_math_delimiters(self, text: str) -> str:
         # 仅在非 fenced code 区域执行数学分隔符替换。
