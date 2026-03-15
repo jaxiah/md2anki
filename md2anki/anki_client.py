@@ -163,6 +163,22 @@ class AnkiClient:
             return True, None
         return False, str(result)
 
+    def _move_note_to_deck(self, note_id: str, deck_full: str) -> tuple[bool, str | None]:
+        """Move all cards of a note to deck_full, preserving Anki review scheduling."""
+        if not self.ensure_deck(deck_full):
+            return False, f"ensure_deck failed for {deck_full!r}"
+        ok, result = self.invoke("notesInfo", notes=[int(note_id)])
+        if not ok:
+            return False, f"notesInfo failed: {result}"
+        notes_data = result if isinstance(result, list) else []
+        card_ids: list[int] = [cid for note_data in notes_data for cid in note_data.get("cards", [])]
+        if not card_ids:
+            return False, f"no cards found for note {note_id}"
+        ok, result = self.invoke("changeDeck", cards=card_ids, deck=deck_full)
+        if not ok:
+            return False, f"changeDeck failed: {result}"
+        return True, None
+
     @staticmethod
     def _looks_like_timeout(error: Any) -> bool:
         message = str(error).lower()
@@ -326,19 +342,58 @@ class AnkiClient:
             content_hash = self.compute_content_hash(rendered)
 
             if note_id and note_id in items and items[note_id].get("content_hash") == content_hash:
-                # 已存在且内容未变化，直接跳过。
-                result.skipped += 1
-                if progress_callback:
-                    progress_callback("sync", index, total_notes, getattr(parsed, "h4_heading_pure", None), "skip_unchanged")
+                deck_in_state = items[note_id].get("deck_full")
+                new_deck_check = getattr(parsed, "deck_full", None)
+                if deck_in_state == new_deck_check:
+                    # 内容与 deck 均未变化，完全跳过。
+                    result.skipped += 1
+                    if progress_callback:
+                        progress_callback("sync", index, total_notes, getattr(parsed, "h4_heading_pure", None), "skip_unchanged")
+                    continue
+                # 内容未变但 deck 需要更新（父节点重命名，或 legacy state 无 deck_full 记录）。
+                if self.is_dry_run():
+                    result.dry_run_actions.append(
+                        {
+                            "action": "would_move_deck",
+                            "anki_note_id": note_id,
+                            "source_file": getattr(parsed, "source_file", None),
+                            "line_idx_h4": getattr(parsed, "line_idx_h4", None),
+                            "deck_move": True,
+                            "old_deck": deck_in_state,
+                            "new_deck": new_deck_check,
+                        }
+                    )
+                    if progress_callback:
+                        progress_callback("sync", index, total_notes, getattr(parsed, "h4_heading_pure", None), "would_move_deck")
+                    continue
+                move_ok, move_err = self._move_note_to_deck(note_id, new_deck_check)
+                if move_ok:
+                    items[note_id]["deck_full"] = new_deck_check
+                    state_changed = True
+                    result.updated += 1
+                    if progress_callback:
+                        progress_callback("sync", index, total_notes, getattr(parsed, "h4_heading_pure", None), "deck_moved")
+                else:
+                    result.errors.append(
+                        f"changeDeck failed for ^anki-{note_id} ({deck_in_state!r} \u2192 {new_deck_check!r}): {move_err}"
+                    )
+                    if progress_callback:
+                        progress_callback("sync", index, total_notes, getattr(parsed, "h4_heading_pure", None), "deck_move_failed")
                 continue
 
             if self.is_dry_run():
+                _new_deck = getattr(parsed, "deck_full", None)
+                _old_deck = items.get(note_id, {}).get("deck_full") if note_id else None
+                _deck_will_move = note_id is not None and _old_deck != _new_deck
                 result.dry_run_actions.append(
                     {
                         "action": "would_update" if note_id else "would_add",
                         "anki_note_id": note_id,
                         "source_file": getattr(parsed, "source_file", None),
                         "line_idx_h4": getattr(parsed, "line_idx_h4", None),
+                        "deck_move": _deck_will_move,
+                        "old_deck": _old_deck if _deck_will_move else None,
+                        "new_deck": _new_deck if _deck_will_move else None,
                     }
                 )
                 if progress_callback:
@@ -395,12 +450,24 @@ class AnkiClient:
                     if self.fail_fast:
                         break
                     continue
+                # 字段更新成功；检查是否需要同时迁移 deck。
                 result.updated += 1
+                new_deck = getattr(parsed, "deck_full", None)
+                old_deck = items.get(note_id, {}).get("deck_full")
+                deck_to_persist = new_deck
+                if old_deck != new_deck:
+                    move_ok, move_err = self._move_note_to_deck(note_id, new_deck)
+                    if not move_ok:
+                        result.errors.append(
+                            f"changeDeck failed for ^anki-{note_id} ({old_deck!r} → {new_deck!r}): {move_err}"
+                        )
+                        deck_to_persist = old_deck  # 保留旧 deck，下次 sync 自动重试
                 items[note_id] = {
                     "content_hash": content_hash,
                     "updated_ts": self._now_iso(),
                     "source_file": getattr(parsed, "source_file", None),
                     "h4_heading_pure": getattr(parsed, "h4_heading_pure", None),
+                    "deck_full": deck_to_persist,
                 }
                 state_changed = True
                 if progress_callback:
@@ -436,6 +503,7 @@ class AnkiClient:
                 "updated_ts": self._now_iso(),
                 "source_file": getattr(parsed, "source_file", None),
                 "h4_heading_pure": getattr(parsed, "h4_heading_pure", None),
+                "deck_full": getattr(parsed, "deck_full", None),
             }
             result.bindings_to_writeback.append(
                 {
