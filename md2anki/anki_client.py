@@ -59,7 +59,8 @@ class AnkiClient:
         self.fail_fast = fail_fast
         self.state = self.load_state()
         self.deck_cache = self.load_deck_cache()
-        self._uploaded_media_keys: set[tuple[str, str]] = set()
+        # filename → content fingerprint；在进程间和跨进程两个维度去重。
+        self._uploaded_media: dict[str, str] = dict(self.state.get("uploaded_media", {}))
 
     def is_dry_run(self) -> bool:
         return not self.apply_changes
@@ -85,6 +86,7 @@ class AnkiClient:
     def save_state(self) -> None:
         # 采用临时文件替换，减少中途中断导致的 state 损坏风险。
         self.sync_state_file.parent.mkdir(parents=True, exist_ok=True)
+        self.state["uploaded_media"] = self._uploaded_media
         tmp_file = self.sync_state_file.with_suffix(self.sync_state_file.suffix + ".tmp")
         tmp_file.write_text(json.dumps(self.state, ensure_ascii=False, indent=2), encoding="utf-8")
         tmp_file.replace(self.sync_state_file)
@@ -162,6 +164,25 @@ class AnkiClient:
         if success:
             return True, None
         return False, str(result)
+
+    @staticmethod
+    def _compute_media_fingerprint(media: Any) -> str:
+        """Content fingerprint used to skip re-uploading unchanged media across runs.
+
+        对有文件路径的 media，用 mtime+size（不读文件内容，对大文件友好）。
+        仅有 base64_data 时，用 sha256(内容)。
+        """
+        abs_path = getattr(media, "abs_path", None)
+        if abs_path:
+            try:
+                stat = Path(abs_path).stat()
+                return f"mtime:{stat.st_mtime_ns}:size:{stat.st_size}"
+            except OSError:
+                pass
+        base64_data = getattr(media, "base64_data", None)
+        if base64_data:
+            return hashlib.sha256(base64_data.encode()).hexdigest()
+        return ""
 
     def _move_note_to_deck(self, note_id: str, deck_full: str) -> tuple[bool, str | None]:
         """Move all cards of a note to deck_full, preserving Anki review scheduling."""
@@ -241,8 +262,8 @@ class AnkiClient:
         total = len(unique_media)
 
         for index, media in enumerate(unique_media, start=1):
-            media_key = (media.filename, media.base64_data)
-            if media_key in self._uploaded_media_keys:
+            fingerprint = self._compute_media_fingerprint(media)
+            if fingerprint and self._uploaded_media.get(media.filename) == fingerprint:
                 if progress_callback:
                     progress_callback("media", index, total, media.filename, "cached")
                 continue
@@ -258,11 +279,14 @@ class AnkiClient:
                     break
                 continue
 
-            self._uploaded_media_keys.add(media_key)
+            if fingerprint:
+                self._uploaded_media[media.filename] = fingerprint
             result.uploaded += 1
             if progress_callback:
                 progress_callback("media", index, total, media.filename, media_status)
 
+        if result.uploaded > 0:
+            self.save_state()
         return result
 
     def sync(self, rendered_notes, progress_callback=None, skip_media_upload: bool = False):
@@ -414,8 +438,8 @@ class AnkiClient:
                 media_failed = False
                 for media in rendered.media_files:
                     # 媒体任一失败则该 note 终止，避免字段与媒体不一致。
-                    media_key = (media.filename, media.base64_data)
-                    if media_key in self._uploaded_media_keys:
+                    fingerprint = self._compute_media_fingerprint(media)
+                    if fingerprint and self._uploaded_media.get(media.filename) == fingerprint:
                         continue
                     media_ok, media_err, _ = self._store_media(media)
                     if not media_ok:
@@ -423,7 +447,9 @@ class AnkiClient:
                         result.errors.append(f"storeMediaFile failed for {media.filename}: {media_err}")
                         media_failed = True
                         break
-                    self._uploaded_media_keys.add(media_key)
+                    if fingerprint:
+                        self._uploaded_media[media.filename] = fingerprint
+                    state_changed = True
                 if media_failed:
                     if progress_callback:
                         progress_callback("sync", index, total_notes, getattr(parsed, "h4_heading_pure", None), "media_failed")

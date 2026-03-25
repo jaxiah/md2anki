@@ -342,6 +342,76 @@ def test_prewarm_progress_reports_upload_mode(tmp_path: Path):
 
 
 # ---------------------------------------------------------------------------
+# Media fingerprint persistence: cross-run dedup
+# ---------------------------------------------------------------------------
+
+
+def test_media_fingerprint_persisted_after_prewarm(tmp_path: Path):
+    """After prewarm, uploaded_media is saved to sync_state.json."""
+    client = _new_client(tmp_path, apply_changes=True)
+
+    def _invoke(action, **params):
+        return True, None
+
+    client.invoke = _invoke
+
+    media = FakeMedia(filename="img.png", source_ref="img.png", base64_data="BASE64CONTENT")
+    client.prewarm_media([FakeRendered(parsed=FakeParsed(), media_files=[media])])
+
+    import json as _json
+    state = _json.loads((tmp_path / "sync_state.json").read_text())
+    assert "img.png" in state.get("uploaded_media", {})
+
+
+def test_prewarm_skips_media_already_uploaded_in_previous_run(tmp_path: Path):
+    """Second run: media with same fingerprint is skipped (storeMediaFile not called again)."""
+    store_count = {"n": 0}
+
+    def _invoke(action, **params):
+        if action == "storeMediaFile":
+            store_count["n"] += 1
+        return True, None
+
+    # First run: upload
+    client1 = _new_client(tmp_path, apply_changes=True)
+    client1.invoke = _invoke
+    media = FakeMedia(filename="img.png", source_ref="img.png", base64_data="STABLE")
+    client1.prewarm_media([FakeRendered(parsed=FakeParsed(), media_files=[media])])
+
+    assert store_count["n"] == 1
+
+    # Second run: new client loads persisted state → should skip upload
+    client2 = _new_client(tmp_path, apply_changes=True)
+    client2.invoke = _invoke
+    client2.prewarm_media([FakeRendered(parsed=FakeParsed(), media_files=[media])])
+
+    assert store_count["n"] == 1  # still 1, not re-uploaded
+
+
+def test_media_reuploaded_when_fingerprint_changes(tmp_path: Path):
+    """If base64_data changes (file updated), fingerprint changes → re-uploaded."""
+    store_count = {"n": 0}
+
+    def _invoke(action, **params):
+        if action == "storeMediaFile":
+            store_count["n"] += 1
+        return True, None
+
+    media_v1 = FakeMedia(filename="img.png", source_ref="img.png", base64_data="VERSION1")
+    media_v2 = FakeMedia(filename="img.png", source_ref="img.png", base64_data="VERSION2")
+
+    client1 = _new_client(tmp_path, apply_changes=True)
+    client1.invoke = _invoke
+    client1.prewarm_media([FakeRendered(parsed=FakeParsed(), media_files=[media_v1])])
+    assert store_count["n"] == 1
+
+    client2 = _new_client(tmp_path, apply_changes=True)
+    client2.invoke = _invoke
+    client2.prewarm_media([FakeRendered(parsed=FakeParsed(), media_files=[media_v2])])
+    assert store_count["n"] == 2  # re-uploaded because fingerprint differs
+
+
+# ---------------------------------------------------------------------------
 # Deck move: state schema
 # ---------------------------------------------------------------------------
 
