@@ -254,3 +254,36 @@ $$""",
     assert "\\begin{aligned}" in rendered.front_html
     assert "\\end{aligned}" in rendered.front_html
     assert "\\\\" in rendered.front_html
+
+
+def test_inline_math_preserves_escaped_braces(tmp_path: Path):
+    """\\{ and \\} inside $...$ must not be stripped by markdown-it backslash escaping."""
+    renderer = _new_renderer(tmp_path)
+    note = FakeParsedNote(
+        source_file="x.md",
+        front_md=r"Set: $\left\{C_{i,j,0} \mid i,j \in M\times N\right\}$ and $\{A_{ik} B_{kj}\}$",
+        back_md="ok",
+    )
+
+    rendered = _render_case("inline_math_escaped_braces", renderer, note)
+
+    assert r"\left\{" in rendered.front_html
+    assert r"\right\}" in rendered.front_html
+    assert r"\{A_{ik}" in rendered.front_html
+    assert r"\}" in rendered.front_html
+
+
+def test_inline_math_preserves_other_backslash_commands(tmp_path: Path):
+    """\\frac, \\cdot and other letter-based commands must be untouched."""
+    renderer = _new_renderer(tmp_path)
+    note = FakeParsedNote(
+        source_file="x.md",
+        front_md=r"$\frac{a}{b} + \alpha \cdot \beta$",
+        back_md="ok",
+    )
+
+    rendered = _render_case("inline_math_backslash_commands", renderer, note)
+
+    assert r"\frac{a}{b}" in rendered.front_html
+    assert r"\alpha" in rendered.front_html
+    assert r"\cdot" in rendered.front_html

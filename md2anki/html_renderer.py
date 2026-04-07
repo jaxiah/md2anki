@@ -144,7 +144,7 @@ class HtmlRenderer:
         display_math_map: dict[str, str],
         token_index: int,
     ) -> tuple[str, int]:
-        def repl(match: re.Match) -> str:
+        def repl_display(match: re.Match) -> str:
             nonlocal token_index
             token = f"MD2ANKI_DISPLAY_MATH_{token_index}"
             token_index += 1
@@ -152,7 +152,16 @@ class HtmlRenderer:
             display_math_map[token] = f"\\[{raw_math}\\]"
             return f"\n{token}\n"
 
-        replaced = RE_DISPLAY_MATH.sub(repl, text)
+        def repl_inline(match: re.Match) -> str:
+            nonlocal token_index
+            token = f"MD2ANKI_INLINE_MATH_{token_index}"
+            token_index += 1
+            raw_math = match.group(1)
+            display_math_map[token] = f"\\({raw_math}\\)"
+            return token
+
+        replaced = RE_DISPLAY_MATH.sub(repl_display, text)
+        replaced = RE_INLINE_MATH.sub(repl_inline, replaced)
         return replaced, token_index
 
     @staticmethod
@@ -180,8 +189,10 @@ class HtmlRenderer:
 
     @staticmethod
     def _normalize_math_in_plain_text(text: str) -> str:
+        # Display and inline math are both tokenized before this step;
+        # these substitutions are kept only as a safety fallback for any
+        # $...$ that somehow escaped tokenization (e.g. edge cases).
         text = RE_DISPLAY_MATH.sub(lambda m: f"\\\\[{m.group(1)}\\\\]", text)
-        text = RE_INLINE_MATH.sub(lambda m: f"\\\\({m.group(1)}\\\\)", text)
         return text
 
     def _resolve_image_path(self, img_ref: str) -> tuple[Path | None, list[str]]:
