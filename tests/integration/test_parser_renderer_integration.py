@@ -236,7 +236,7 @@ def test_h4_without_parent_uses_base_deck_and_file_stem_footer():
         assert note.deck_full == "DeckNoParent"
 
     rendered_notes = [renderer.render(note) for note in doc.notes]
-    assert ">08_h4_without_parent<" in rendered_notes[0].back_html_with_footer
+    assert "open in Obsidian" in rendered_notes[0].back_html_with_footer
     assert "file=08_h4_without_parent" in rendered_notes[0].back_html_with_footer
 
     _dump_case_result("h4_without_parent_uses_base_deck_and_file_stem_footer", doc, rendered_notes)
@@ -252,7 +252,7 @@ def test_h4_without_parent_in_subdir_uses_subfile_stem_footer():
     assert note.deck_full == "DeckNoParentSub"
 
     rendered = renderer.render(note)
-    assert ">09_h4_without_parent_sub<" in rendered.back_html_with_footer
+    assert "open in Obsidian" in rendered.back_html_with_footer
     assert "file=sub/09_h4_without_parent_sub" in rendered.back_html_with_footer
 
     _dump_case_result("h4_without_parent_in_subdir_uses_subfile_stem_footer", doc, [rendered])

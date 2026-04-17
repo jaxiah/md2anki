@@ -53,10 +53,9 @@ class HtmlRenderer:
         warnings.extend(back_warnings)
 
         note_url = self._build_note_url(note)
-        note_label = Path(note.source_file).stem
         footer = (
             '\n<div class="md2anki-source" style="margin-top:8px; font-size:0.85em; opacity:0.75;">'
-            f'<a href="{note_url}">{html.escape(note_label)}</a></div>'
+            f'<a href="{note_url}">open in Obsidian</a></div>'
         )
         back_html_with_footer = f"{back_html}{footer}"
 

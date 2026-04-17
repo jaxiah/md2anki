@@ -94,7 +94,7 @@ def test_footer_links_to_note_with_anki_id(tmp_path: Path):
     # Footer links to the note itself via ^anki-<id>
     assert "file=folder/a%23%5Eanki-a1b2c3d4" in rendered.back_html_with_footer
     # Label is the file stem, not the parent title
-    assert ">a<" in rendered.back_html_with_footer
+    assert "open in Obsidian" in rendered.back_html_with_footer
     assert "font-size:0.85em" in rendered.back_html_with_footer
     # obsidian_url is exposed for URL drift tracking
     assert rendered.obsidian_url is not None
@@ -115,7 +115,7 @@ def test_footer_links_to_file_only_when_no_anki_id(tmp_path: Path):
 
     assert "file=folder/a" in rendered.back_html_with_footer
     assert "%23" not in rendered.back_html_with_footer
-    assert ">a<" in rendered.back_html_with_footer
+    assert "open in Obsidian" in rendered.back_html_with_footer
     assert rendered.obsidian_url is not None
     assert "#" not in rendered.obsidian_url
 
