@@ -115,7 +115,6 @@ def test_basic_note_extraction_and_rendering():
     note1 = doc.notes[0]
     assert note1.deck_full == "DeckA::Parent One"
     assert note1.parent_level == 3
-    assert note1.parent_block_id == "id-p111aaaa"
     assert note1.anki_note_id == "1001"
 
     rendered1 = renderer.render(note1)
@@ -207,13 +206,12 @@ def test_blank_lines_between_header_and_metadata_are_handled_end_to_end():
     assert len(doc.notes) == 1
     note = doc.notes[0]
     assert note.parent_level == 2
-    assert note.parent_block_id == "id-blank2222"
     assert note.anki_note_id == "6001"
     assert "^anki-6001" not in note.back_md
 
     rendered = renderer.render(note)
     assert "Line one" in rendered.back_html
-    assert "file=06_blank_lines_metadata%23%5Eid-blank2222" in rendered.back_html_with_footer
+    assert "file=06_blank_lines_metadata%23%5Eanki-6001" in rendered.back_html_with_footer
 
     _dump_case_result("blank_lines_between_header_and_metadata_are_handled_end_to_end", doc, [rendered])
 

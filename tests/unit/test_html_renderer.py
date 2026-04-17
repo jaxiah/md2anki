@@ -11,7 +11,7 @@ class FakeParsedNote:
     front_md: str
     back_md: str
     parent_title: str | None = None
-    parent_block_id: str | None = None
+    anki_note_id: str | None = None
 
 
 DUMP_RENDERED_NOTE_HTML = os.getenv("DUMP_RENDERED_NOTE_HTML", "1") == "1"
@@ -77,39 +77,47 @@ def _new_renderer(tmp_path: Path) -> HtmlRenderer:
     return HtmlRenderer(vault_name="sample-notes", vault_root=vault_root, asset_root="assets")
 
 
-def test_basic_markdown_render_and_footer_with_block_id(tmp_path: Path):
+def test_footer_links_to_note_with_anki_id(tmp_path: Path):
     renderer = _new_renderer(tmp_path)
     note = FakeParsedNote(
         source_file="folder/a.md",
         front_md="**Front**",
         back_md="Back text",
         parent_title="Parent",
-        parent_block_id="id-a1b2c3d4",
+        anki_note_id="a1b2c3d4",
     )
 
-    rendered = _render_case("basic_markdown_render", renderer, note)
+    rendered = _render_case("footer_links_to_note_with_anki_id", renderer, note)
 
     assert "<strong>Front</strong>" in rendered.front_html
     assert "Back text" in rendered.back_html
-    assert ">Parent<" in rendered.back_html_with_footer
-    assert "Jump to" not in rendered.back_html_with_footer
+    # Footer links to the note itself via ^anki-<id>
+    assert "file=folder/a%23%5Eanki-a1b2c3d4" in rendered.back_html_with_footer
+    # Label is the file stem, not the parent title
+    assert ">a<" in rendered.back_html_with_footer
     assert "font-size:0.85em" in rendered.back_html_with_footer
-    assert "file=folder/a%23%5Eid-a1b2c3d4" in rendered.back_html_with_footer
+    # obsidian_url is exposed for URL drift tracking
+    assert rendered.obsidian_url is not None
+    assert "anki-a1b2c3d4" in rendered.obsidian_url
 
 
-def test_footer_fallbacks_to_parent_title_when_no_block_id(tmp_path: Path):
+def test_footer_links_to_file_only_when_no_anki_id(tmp_path: Path):
     renderer = _new_renderer(tmp_path)
     note = FakeParsedNote(
         source_file="folder/a.md",
         front_md="F",
         back_md="B",
         parent_title="Parent Topic",
-        parent_block_id=None,
+        # no anki_note_id → file-only URL, no anchor
     )
 
-    rendered = _render_case("footer_fallback_parent_title", renderer, note)
+    rendered = _render_case("footer_links_to_file_only_when_no_anki_id", renderer, note)
 
-    assert "file=folder/a%23Parent%20Topic" in rendered.back_html_with_footer
+    assert "file=folder/a" in rendered.back_html_with_footer
+    assert "%23" not in rendered.back_html_with_footer
+    assert ">a<" in rendered.back_html_with_footer
+    assert rendered.obsidian_url is not None
+    assert "#" not in rendered.obsidian_url
 
 
 def test_wiki_link_conversion_with_alias(tmp_path: Path):

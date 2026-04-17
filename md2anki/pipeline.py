@@ -89,44 +89,6 @@ def run_pipeline(
         parsed_docs.append(doc)
         _emit_progress("parse", file_index, total_files, doc.source_file, "parsed")
 
-        if write_back_markdown and apply_anki_changes:
-            # 先确保父节点 block id 落地，再进行渲染与 hash 计算，避免首轮后续出现“全量 update”。
-            parent_meta_by_line: dict[int, dict[str, Any]] = {}
-            for note in doc.notes:
-                if note.parent_line_idx is None:
-                    continue
-                meta = parent_meta_by_line.setdefault(
-                    note.parent_line_idx,
-                    {
-                        "title": note.parent_title,
-                        "line_idx": note.parent_line_idx,
-                        "block_id": note.parent_block_id,
-                    },
-                )
-                if not meta.get("block_id") and note.parent_block_id:
-                    meta["block_id"] = note.parent_block_id
-
-            if parent_meta_by_line:
-                file_lines = abs_file.read_text(encoding="utf-8").splitlines(keepends=True)
-                parent_changed = False
-                parent_ops = sorted(parent_meta_by_line.values(), key=lambda item: item.get("line_idx", -1), reverse=True)
-                for parent_meta in parent_ops:
-                    _, inserted = processor.ensure_parent_block_id(parent_meta, file_lines)
-                    if inserted:
-                        parent_changed = True
-
-                # 将最新 block_id 回填到本轮 notes，保证后续渲染与 hash 稳定。
-                for note in doc.notes:
-                    if note.parent_line_idx in parent_meta_by_line:
-                        note.parent_block_id = parent_meta_by_line[note.parent_line_idx].get("block_id")
-
-                if parent_changed:
-                    abs_file.write_text("".join(file_lines), encoding="utf-8")
-                    _record_writeback(doc.source_file)
-                    # 父节点插入会改变后续 H4 行号，需重解析刷新 line_idx_h4 后再继续。
-                    doc = processor.parse_file(abs_file)
-                    parsed_docs[-1] = doc
-
         report.errors.extend(doc.warnings)
 
         for note in doc.notes:
@@ -183,25 +145,6 @@ def run_pipeline(
     if write_back_markdown and apply_anki_changes:
         # 仅在 apply 模式回写，dry-run 永远不触碰 markdown 文件。
         writeback_by_file: dict[str, dict[str, list[dict[str, Any]]]] = {}
-        parent_ops_by_file: dict[str, dict[int, dict[str, Any]]] = {}
-
-        for doc in parsed_docs:
-            for note in doc.notes:
-                if note.no_anki and not note.delete_requested:
-                    continue
-                if note.parent_line_idx is None:
-                    continue
-
-                per_file = parent_ops_by_file.setdefault(note.source_file, {})
-                existing = per_file.get(note.parent_line_idx)
-                if existing is None:
-                    per_file[note.parent_line_idx] = {
-                        "title": note.parent_title,
-                        "line_idx": note.parent_line_idx,
-                        "block_id": note.parent_block_id,
-                    }
-                elif not existing.get("block_id") and note.parent_block_id:
-                    existing["block_id"] = note.parent_block_id
 
         for binding in sync_result.bindings_to_writeback:
             source_file = binding.get("source_file")
@@ -214,9 +157,6 @@ def run_pipeline(
             if not source_file:
                 continue
             writeback_by_file.setdefault(source_file, {"bind": [], "delete": []})["delete"].append(deletion)
-
-        for source_file in parent_ops_by_file:
-            writeback_by_file.setdefault(source_file, {"bind": [], "delete": []})
 
         for source_file, ops in writeback_by_file.items():
             abs_path = vault_root / source_file
@@ -247,15 +187,6 @@ def run_pipeline(
                         "priority": 3,
                     }
                 )
-            for parent_meta in parent_ops_by_file.get(source_file, {}).values():
-                all_ops.append(
-                    {
-                        "kind": "parent",
-                        "line_idx": parent_meta.get("line_idx", -1),
-                        "payload": parent_meta,
-                        "priority": 1,
-                    }
-                )
 
             all_ops.sort(key=lambda item: (item.get("line_idx", -1), item.get("priority", 0)), reverse=True)
 
@@ -273,10 +204,6 @@ def run_pipeline(
                 elif kind == "delete":
                     # delete 成功后，删除 ^anki 行并补 ^noanki。
                     if processor.remove_anki_metadata_and_mark_noanki(file_lines, payload.get("line_idx_h4")):
-                        file_changed = True
-                else:
-                    _, inserted = processor.ensure_parent_block_id(payload, file_lines)
-                    if inserted:
                         file_changed = True
 
             if file_changed:

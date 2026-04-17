@@ -1,5 +1,4 @@
 import json
-import re
 from pathlib import Path
 
 from md2anki import AnkiClient, run_pipeline
@@ -53,7 +52,6 @@ Back line
 
     updated = md_file.read_text(encoding="utf-8")
     assert "^anki-9001" in updated
-    assert re.search(r"### Parent\n\^id-[0-9a-f]{8}\n", updated)
     assert report.added == 1
     assert report.markdown_writebacks == ["01_add.md"]
 
@@ -481,8 +479,6 @@ Body B1
     )
 
     updated = md_file.read_text(encoding="utf-8")
-    assert re.search(r"### Parent A\n\^id-[0-9a-f]{8}\n", updated)
-    assert re.search(r"### Parent B\n\^id-[0-9a-f]{8}\n", updated)
     assert "#### QA1\n^anki-9301\n" in updated
     assert "#### QA2\n^anki-9302\n" in updated
     assert "#### QB1\n^anki-9303\n" in updated

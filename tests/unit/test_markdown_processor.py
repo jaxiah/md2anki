@@ -1,6 +1,5 @@
 import json
 import os
-import re
 from dataclasses import asdict
 from pathlib import Path
 
@@ -103,41 +102,6 @@ answer2
     assert doc.notes[0].front_md == "Q1\n\ncontext line"
     assert doc.notes[0].back_md == "answer line"
     assert doc.notes[1].front_md == "Q2"
-
-
-def test_parse_parent_block_id_from_next_line():
-    content = """---
-ankideck: Math
----
-### Linear Algebra
-^id-abc123ef
-#### Determinant
-A number tied to matrix.
-"""
-    doc = _parse_case("parse_parent_block_id_from_next_line", content)
-
-    assert len(doc.notes) == 1
-    assert doc.notes[0].parent_title == "Linear Algebra"
-    assert doc.notes[0].parent_block_id == "id-abc123ef"
-    assert doc.notes[0].deck_full == "Math::Linear Algebra"
-
-
-def test_parse_parent_block_id_allows_blank_lines_before_id():
-    content = """---
-ankideck: Math
----
-### Parent
-
-
-^id-ff001122
-#### Q
-Body
-"""
-    doc = _parse_case("parent_block_id_with_blank_lines", content)
-
-    assert len(doc.notes) == 1
-    assert doc.notes[0].parent_block_id == "id-ff001122"
-    assert doc.notes[0].deck_full == "Math::Parent"
 
 
 def test_parse_without_h3_uses_base_deck_only():
@@ -292,37 +256,6 @@ A
     assert doc.notes[0].deck_full == "D::Topic H1"
 
 
-def test_ensure_parent_block_id_and_append_anki_id():
-    lines = ["### Parent\n", "#### Question\n"]
-    processor = _new_processor()
-
-    parent_meta = {"title": "Parent", "line_idx": 0, "block_id": None}
-    block_id, changed = processor.ensure_parent_block_id(parent_meta, lines)
-
-    assert changed is True
-    assert block_id is not None
-    assert re.search(r"^id-[0-9a-f]{8}$", block_id)
-    assert lines[0].strip() == "### Parent"
-    assert lines[1].strip() == f"^{block_id}"
-
-    wrote = processor.append_anki_id_at_line(lines, 2, "999")
-    assert wrote is True
-    assert lines[2].strip() == "#### Question"
-    assert lines[3].strip() == "^anki-999"
-
-
-def test_ensure_parent_block_id_noop_when_existing_block_id():
-    lines = ["### Parent\n", "^id-11112222\n", "#### Question\n"]
-    processor = _new_processor()
-
-    parent_meta = {"title": "Parent", "line_idx": 0, "block_id": "id-11112222"}
-    block_id, changed = processor.ensure_parent_block_id(parent_meta, lines)
-
-    assert changed is False
-    assert block_id == "id-11112222"
-    assert lines[1].strip() == "^id-11112222"
-
-
 def test_append_anki_id_at_line_returns_false_on_out_of_range():
     lines = ["#### Q\n"]
     processor = _new_processor()
@@ -347,18 +280,6 @@ def test_append_anki_id_at_line_noop_when_next_line_already_has_id():
     wrote = processor.append_anki_id_at_line(lines, 0, "999")
     assert wrote is False
     assert lines[3].strip() == "^anki-123"
-
-
-def test_ensure_parent_block_id_noop_when_blank_lines_then_existing_id():
-    lines = ["### Parent\n", "\n", "\n", "^id-1010abcd\n", "#### Q\n"]
-    processor = _new_processor()
-
-    parent_meta = {"title": "Parent", "line_idx": 0, "block_id": None}
-    block_id, changed = processor.ensure_parent_block_id(parent_meta, lines)
-
-    assert changed is False
-    assert block_id == "id-1010abcd"
-    assert lines[3].strip() == "^id-1010abcd"
 
 
 def test_parse_delete_requested_from_anki_meta_line():

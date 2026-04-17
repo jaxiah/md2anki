@@ -31,6 +31,7 @@ class FakeRendered:
     front_html: str = "<p>F</p>"
     back_html_with_footer: str = "<p>B</p>"
     media_files: list[FakeMedia] = field(default_factory=list)
+    obsidian_url: str | None = None
 
 
 def _new_client(tmp_path: Path, apply_changes: bool = False) -> AnkiClient:
@@ -102,6 +103,7 @@ def test_sync_skips_when_hash_unchanged(tmp_path: Path):
     client.state["items"]["555"] = {
         "content_hash": digest,
         "deck_full": "Deck::Parent",  # matches note.parsed.deck_full → fully skipped
+        "obsidian_url": None,  # matches note.obsidian_url (also None) → no URL drift
         "updated_ts": "2026-03-01T00:00:00Z",
         "source_file": "a.md",
         "h4_heading_pure": "Question",
@@ -913,3 +915,238 @@ def test_sync_dry_run_no_deck_move_flag_when_deck_unchanged(tmp_path: Path):
     assert action["deck_move"] is False
     assert action["old_deck"] is None
     assert action["new_deck"] is None
+
+
+# ---------------------------------------------------------------------------
+# obsidian_url: state persistence and URL drift
+# ---------------------------------------------------------------------------
+
+
+def test_sync_add_stores_obsidian_url_none_in_state(tmp_path: Path):
+    """New note: state records obsidian_url=None so second sync can detect URL drift."""
+    client = _new_client(tmp_path, apply_changes=True)
+
+    def _invoke(action, **params):
+        if action == "createDeck":
+            return True, None
+        if action == "addNote":
+            return True, 600
+        raise AssertionError(f"unexpected action: {action}")
+
+    client.invoke = _invoke
+    note = FakeRendered(parsed=FakeParsed(), obsidian_url="obsidian://open?vault=V&file=a")
+
+    result = client.sync([note])
+
+    assert result.added == 1
+    assert client.state["items"]["600"]["obsidian_url"] is None
+
+
+def test_sync_update_stores_obsidian_url_in_state(tmp_path: Path):
+    """Updated note: state records the rendered obsidian_url."""
+    client = _new_client(tmp_path, apply_changes=True)
+    url = "obsidian://open?vault=V&file=a%23%5Eanki-601"
+    note = FakeRendered(parsed=FakeParsed(anki_note_id="601", deck_full="Deck::Parent"), obsidian_url=url)
+    client.state["items"]["601"] = {
+        "content_hash": "stale",
+        "deck_full": "Deck::Parent",
+        "obsidian_url": None,
+        "updated_ts": "2026-01-01T00:00:00Z",
+        "source_file": "a.md",
+        "h4_heading_pure": "Q",
+    }
+
+    def _invoke(action, **params):
+        if action in {"createDeck", "updateNoteFields"}:
+            return True, None
+        raise AssertionError(f"unexpected action: {action}")
+
+    client.invoke = _invoke
+    result = client.sync([note])
+
+    assert result.updated == 1
+    assert client.state["items"]["601"]["obsidian_url"] == url
+
+
+def test_sync_skips_when_hash_deck_and_url_all_unchanged(tmp_path: Path):
+    """Hash + deck + url all match state → skip entirely."""
+    client = _new_client(tmp_path, apply_changes=True)
+    url = "obsidian://open?vault=V&file=a%23%5Eanki-700"
+    note = FakeRendered(parsed=FakeParsed(anki_note_id="700", deck_full="Deck::A"), obsidian_url=url)
+    digest = client.compute_content_hash(note)
+    client.state["items"]["700"] = {
+        "content_hash": digest,
+        "deck_full": "Deck::A",
+        "obsidian_url": url,
+        "updated_ts": "2026-01-01T00:00:00Z",
+        "source_file": "a.md",
+        "h4_heading_pure": "Q",
+    }
+
+    def _unexpected(*args, **kwargs):
+        raise AssertionError("invoke should not be called")
+
+    client.invoke = _unexpected
+    result = client.sync([note])
+
+    assert result.skipped == 1
+    assert result.updated == 0
+
+
+def test_sync_url_drift_triggers_update_when_hash_unchanged(tmp_path: Path):
+    """Hash and deck match, but obsidian_url differs → updateNoteFields called, URL updated in state."""
+    client = _new_client(tmp_path, apply_changes=True)
+    old_url = None
+    new_url = "obsidian://open?vault=V&file=a%23%5Eanki-800"
+    note = FakeRendered(parsed=FakeParsed(anki_note_id="800", deck_full="Deck::A"), obsidian_url=new_url)
+    digest = client.compute_content_hash(note)
+    client.state["items"]["800"] = {
+        "content_hash": digest,
+        "deck_full": "Deck::A",
+        "obsidian_url": old_url,
+        "updated_ts": "2026-01-01T00:00:00Z",
+        "source_file": "a.md",
+        "h4_heading_pure": "Q",
+    }
+
+    calls: list[str] = []
+
+    def _invoke(action, **params):
+        calls.append(action)
+        if action in {"createDeck", "updateNoteFields"}:
+            return True, None
+        raise AssertionError(f"unexpected action: {action}")
+
+    client.invoke = _invoke
+    result = client.sync([note])
+
+    assert result.updated == 1
+    assert result.skipped == 0
+    assert "updateNoteFields" in calls
+    assert "changeDeck" not in calls
+    assert client.state["items"]["800"]["obsidian_url"] == new_url
+
+
+def test_sync_legacy_state_without_obsidian_url_key_triggers_drift(tmp_path: Path):
+    """Legacy state has no obsidian_url key → treated as None → drifts vs rendered URL → forced update."""
+    client = _new_client(tmp_path, apply_changes=True)
+    new_url = "obsidian://open?vault=V&file=notes%23%5Eanki-900"
+    note = FakeRendered(parsed=FakeParsed(anki_note_id="900", deck_full="Deck::A"), obsidian_url=new_url)
+    digest = client.compute_content_hash(note)
+    client.state["items"]["900"] = {
+        "content_hash": digest,
+        "deck_full": "Deck::A",
+        # no obsidian_url key → legacy state
+        "updated_ts": "2026-01-01T00:00:00Z",
+        "source_file": "a.md",
+        "h4_heading_pure": "Q",
+    }
+
+    calls: list[str] = []
+
+    def _invoke(action, **params):
+        calls.append(action)
+        if action in {"createDeck", "updateNoteFields"}:
+            return True, None
+        raise AssertionError(f"unexpected action: {action}")
+
+    client.invoke = _invoke
+    result = client.sync([note])
+
+    assert result.updated == 1
+    assert result.skipped == 0
+    assert "updateNoteFields" in calls
+    assert client.state["items"]["900"]["obsidian_url"] == new_url
+
+
+def test_sync_url_drift_failure_does_not_update_state(tmp_path: Path):
+    """If updateNoteFields fails for URL drift, state obsidian_url is not changed."""
+    client = _new_client(tmp_path, apply_changes=True)
+    new_url = "obsidian://open?vault=V&file=a%23%5Eanki-910"
+    note = FakeRendered(parsed=FakeParsed(anki_note_id="910", deck_full="Deck::A"), obsidian_url=new_url)
+    digest = client.compute_content_hash(note)
+    client.state["items"]["910"] = {
+        "content_hash": digest,
+        "deck_full": "Deck::A",
+        "obsidian_url": None,
+        "updated_ts": "2026-01-01T00:00:00Z",
+        "source_file": "a.md",
+        "h4_heading_pure": "Q",
+    }
+
+    def _invoke(action, **params):
+        if action == "createDeck":
+            return True, None
+        if action == "updateNoteFields":
+            return False, "AnkiConnect error"
+        raise AssertionError(f"unexpected action: {action}")
+
+    client.invoke = _invoke
+    result = client.sync([note])
+
+    assert result.failed == 1
+    assert result.updated == 0
+    assert client.state["items"]["910"]["obsidian_url"] is None
+
+
+def test_sync_dry_run_records_would_update_url_on_url_drift(tmp_path: Path):
+    """Dry-run: hash unchanged, URL drifted → would_update_url action recorded."""
+    client = _new_client(tmp_path, apply_changes=False)
+    new_url = "obsidian://open?vault=V&file=a%23%5Eanki-950"
+    note = FakeRendered(parsed=FakeParsed(anki_note_id="950", deck_full="Deck::A"), obsidian_url=new_url)
+    digest = client.compute_content_hash(note)
+    client.state["items"]["950"] = {
+        "content_hash": digest,
+        "deck_full": "Deck::A",
+        "obsidian_url": None,
+        "updated_ts": "2026-01-01T00:00:00Z",
+        "source_file": "a.md",
+        "h4_heading_pure": "Q",
+    }
+
+    result = client.sync([note])
+
+    assert len(result.dry_run_actions) == 1
+    action = result.dry_run_actions[0]
+    assert action["action"] == "would_update_url"
+    assert action["old_url"] is None
+    assert action["new_url"] == new_url
+    assert action["deck_move"] is False
+
+
+def test_sync_url_drift_with_deck_change_does_both(tmp_path: Path):
+    """Hash unchanged, URL drifted + deck changed → updateNoteFields + changeDeck, both updated in state."""
+    client = _new_client(tmp_path, apply_changes=True)
+    new_url = "obsidian://open?vault=V&file=a%23%5Eanki-960"
+    note = FakeRendered(parsed=FakeParsed(anki_note_id="960", deck_full="Deck::New"), obsidian_url=new_url)
+    digest = client.compute_content_hash(note)
+    client.state["items"]["960"] = {
+        "content_hash": digest,
+        "deck_full": "Deck::Old",
+        "obsidian_url": None,
+        "updated_ts": "2026-01-01T00:00:00Z",
+        "source_file": "a.md",
+        "h4_heading_pure": "Q",
+    }
+
+    calls: list[str] = []
+
+    def _invoke(action, **params):
+        calls.append(action)
+        if action in {"createDeck", "updateNoteFields"}:
+            return True, None
+        if action == "notesInfo":
+            return True, [{"cards": [9601]}]
+        if action == "changeDeck":
+            return True, None
+        raise AssertionError(f"unexpected action: {action}")
+
+    client.invoke = _invoke
+    result = client.sync([note])
+
+    assert result.updated == 1
+    assert result.failed == 0
+    assert "updateNoteFields" in calls
+    assert "changeDeck" in calls
+    assert client.state["items"]["960"]["obsidian_url"] == new_url
+    assert client.state["items"]["960"]["deck_full"] == "Deck::New"

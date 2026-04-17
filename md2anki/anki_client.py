@@ -368,41 +368,96 @@ class AnkiClient:
             if note_id and note_id in items and items[note_id].get("content_hash") == content_hash:
                 deck_in_state = items[note_id].get("deck_full")
                 new_deck_check = getattr(parsed, "deck_full", None)
-                if deck_in_state == new_deck_check:
-                    # 内容与 deck 均未变化，完全跳过。
+                url_in_state = items[note_id].get("obsidian_url")
+                url_new = getattr(rendered, "obsidian_url", None)
+
+                deck_changed = deck_in_state != new_deck_check
+                url_changed = url_in_state != url_new
+
+                if not deck_changed and not url_changed:
+                    # 内容、deck、URL 均未变化，完全跳过。
                     result.skipped += 1
                     if progress_callback:
                         progress_callback("sync", index, total_notes, getattr(parsed, "h4_heading_pure", None), "skip_unchanged")
                     continue
-                # 内容未变但 deck 需要更新（父节点重命名，或 legacy state 无 deck_full 记录）。
+
                 if self.is_dry_run():
-                    result.dry_run_actions.append(
-                        {
-                            "action": "would_move_deck",
-                            "anki_note_id": note_id,
-                            "source_file": getattr(parsed, "source_file", None),
-                            "line_idx_h4": getattr(parsed, "line_idx_h4", None),
-                            "deck_move": True,
-                            "old_deck": deck_in_state,
-                            "new_deck": new_deck_check,
-                        }
-                    )
-                    if progress_callback:
-                        progress_callback("sync", index, total_notes, getattr(parsed, "h4_heading_pure", None), "would_move_deck")
+                    if url_changed:
+                        result.dry_run_actions.append(
+                            {
+                                "action": "would_update_url",
+                                "anki_note_id": note_id,
+                                "source_file": getattr(parsed, "source_file", None),
+                                "line_idx_h4": getattr(parsed, "line_idx_h4", None),
+                                "deck_move": deck_changed,
+                                "old_url": url_in_state,
+                                "new_url": url_new,
+                                "old_deck": deck_in_state if deck_changed else None,
+                                "new_deck": new_deck_check if deck_changed else None,
+                            }
+                        )
+                        if progress_callback:
+                            progress_callback("sync", index, total_notes, getattr(parsed, "h4_heading_pure", None), "would_update_url")
+                    else:
+                        result.dry_run_actions.append(
+                            {
+                                "action": "would_move_deck",
+                                "anki_note_id": note_id,
+                                "source_file": getattr(parsed, "source_file", None),
+                                "line_idx_h4": getattr(parsed, "line_idx_h4", None),
+                                "deck_move": True,
+                                "old_deck": deck_in_state,
+                                "new_deck": new_deck_check,
+                            }
+                        )
+                        if progress_callback:
+                            progress_callback("sync", index, total_notes, getattr(parsed, "h4_heading_pure", None), "would_move_deck")
                     continue
-                move_ok, move_err = self._move_note_to_deck(note_id, new_deck_check)
-                if move_ok:
-                    items[note_id]["deck_full"] = new_deck_check
+
+                # URL 漂移：需要重新将带正确 footer 的 HTML 发送到 Anki。
+                if url_changed:
+                    update_ok, update_err = self.invoke(
+                        "updateNoteFields",
+                        note={
+                            "id": int(note_id),
+                            "fields": {
+                                "Front": rendered.front_html,
+                                "Back": rendered.back_html_with_footer,
+                            },
+                        },
+                    )
+                    if not update_ok:
+                        result.failed += 1
+                        result.errors.append(f"url update failed for ^anki-{note_id}: {update_err}")
+                        if progress_callback:
+                            progress_callback("sync", index, total_notes, getattr(parsed, "h4_heading_pure", None), "url_update_failed")
+                        if self.fail_fast:
+                            break
+                        continue
+                    items[note_id]["obsidian_url"] = url_new
                     state_changed = True
+
+                # deck 漂移：内容未变但 deck 需要更新。
+                if deck_changed:
+                    move_ok, move_err = self._move_note_to_deck(note_id, new_deck_check)
+                    if move_ok:
+                        items[note_id]["deck_full"] = new_deck_check
+                        state_changed = True
+                        if not url_changed:
+                            result.updated += 1
+                            if progress_callback:
+                                progress_callback("sync", index, total_notes, getattr(parsed, "h4_heading_pure", None), "deck_moved")
+                    else:
+                        result.errors.append(
+                            f"changeDeck failed for ^anki-{note_id} ({deck_in_state!r} \u2192 {new_deck_check!r}): {move_err}"
+                        )
+                        if not url_changed:
+                            if progress_callback:
+                                progress_callback("sync", index, total_notes, getattr(parsed, "h4_heading_pure", None), "deck_move_failed")
+                if url_changed:
                     result.updated += 1
                     if progress_callback:
-                        progress_callback("sync", index, total_notes, getattr(parsed, "h4_heading_pure", None), "deck_moved")
-                else:
-                    result.errors.append(
-                        f"changeDeck failed for ^anki-{note_id} ({deck_in_state!r} \u2192 {new_deck_check!r}): {move_err}"
-                    )
-                    if progress_callback:
-                        progress_callback("sync", index, total_notes, getattr(parsed, "h4_heading_pure", None), "deck_move_failed")
+                        progress_callback("sync", index, total_notes, getattr(parsed, "h4_heading_pure", None), "url_updated")
                 continue
 
             if self.is_dry_run():
@@ -494,6 +549,7 @@ class AnkiClient:
                     "source_file": getattr(parsed, "source_file", None),
                     "h4_heading_pure": getattr(parsed, "h4_heading_pure", None),
                     "deck_full": deck_to_persist,
+                    "obsidian_url": getattr(rendered, "obsidian_url", None),
                 }
                 state_changed = True
                 if progress_callback:
@@ -530,6 +586,7 @@ class AnkiClient:
                 "source_file": getattr(parsed, "source_file", None),
                 "h4_heading_pure": getattr(parsed, "h4_heading_pure", None),
                 "deck_full": getattr(parsed, "deck_full", None),
+                "obsidian_url": None,  # 尚无 anki_note_id，第二轮 sync 会检测到 URL 漂移并更新
             }
             result.bindings_to_writeback.append(
                 {

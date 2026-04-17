@@ -31,6 +31,7 @@ class RenderedNote:
     back_html_with_footer: str
     media_files: list[MediaItem] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
+    obsidian_url: str | None = None
 
 
 class HtmlRenderer:
@@ -44,18 +45,18 @@ class HtmlRenderer:
         self.md = MarkdownIt("gfm-like", {"html": True, "breaks": True, "linkify": False})
 
     def render(self, note) -> RenderedNote:
-        # front/back 分别渲染，最后统一拼接父级跳转 footer。
+        # front/back 分别渲染，最后统一拼接跳转 footer（指向笔记自身）。
         warnings: list[str] = []
         front_html, front_media, front_warnings = self._render_markdown(note.front_md)
         back_html, back_media, back_warnings = self._render_markdown(note.back_md)
         warnings.extend(front_warnings)
         warnings.extend(back_warnings)
 
-        parent_url = self._build_parent_url(note)
-        parent_label = note.parent_title or Path(note.source_file).stem
+        note_url = self._build_note_url(note)
+        note_label = Path(note.source_file).stem
         footer = (
-            '\n<div class="md2anki-parent" style="margin-top:8px; font-size:0.85em; opacity:0.75;">'
-            f'<a href="{parent_url}">{html.escape(parent_label)}</a></div>'
+            '\n<div class="md2anki-source" style="margin-top:8px; font-size:0.85em; opacity:0.75;">'
+            f'<a href="{note_url}">{html.escape(note_label)}</a></div>'
         )
         back_html_with_footer = f"{back_html}{footer}"
 
@@ -66,6 +67,7 @@ class HtmlRenderer:
             back_html_with_footer=back_html_with_footer,
             media_files=front_media + back_media,
             warnings=warnings,
+            obsidian_url=note_url,
         )
 
     def _render_markdown(self, text: str) -> tuple[str, list[MediaItem], list[str]]:
@@ -218,14 +220,14 @@ class HtmlRenderer:
 
         return matches[0], warnings
 
-    def _build_parent_url(self, note: Any) -> str:
+    def _build_note_url(self, note: Any) -> str:
         # 将锚点并入 file 参数整体编码，避免在外部 webview 中 fragment 丢失。
+        # 若 note 已有 anki_note_id，深链到具体卡片（^anki-<id>）；否则仅链接到文件。
         source_rel = str(note.source_file).replace("\\", "/")
         file_without_md = source_rel[:-3] if source_rel.lower().endswith(".md") else source_rel
-        if note.parent_block_id:
-            target = f"{file_without_md}#^{note.parent_block_id}"
-        elif note.parent_title:
-            target = f"{file_without_md}#{note.parent_title}"
+        anki_note_id = getattr(note, "anki_note_id", None)
+        if anki_note_id:
+            target = f"{file_without_md}#^anki-{anki_note_id}"
         else:
             target = file_without_md
 

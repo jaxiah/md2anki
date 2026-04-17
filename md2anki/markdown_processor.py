@@ -21,8 +21,6 @@ class ParsedNote:
     ankideck_base: str
     deck_full: str
     parent_title: str | None
-    parent_block_id: str | None
-    parent_line_idx: int | None
     parent_level: int | None
     h4_heading_raw: str
     h4_heading_pure: str
@@ -62,10 +60,6 @@ class MarkdownProcessor:
         newline, _ = self._split_newline(template_line)
         newline = newline or "\n"
         return f"^{block_id}{newline}"
-
-    def _read_block_id_below_heading(self, heading_end_line_idx: int | None, lines_all: list[str]) -> str | None:
-        block_id, _ = self._find_metadata_line(heading_end_line_idx, lines_all, RE_BLOCK_ID_LINE)
-        return block_id
 
     def _read_anki_id_below_h4(self, h4_end_line_idx: int | None, lines_all: list[str]) -> str | None:
         anki_id, _ = self._find_metadata_line(h4_end_line_idx, lines_all, RE_ANKI_ID_LINE)
@@ -139,30 +133,6 @@ class MarkdownProcessor:
         newline, _ = self._split_newline(line)
         newline = newline or "\n"
         return f"^anki-{note_id}{newline}"
-
-    def ensure_parent_block_id(self, parent_meta: dict[str, Any] | None, file_lines: list[str]) -> tuple[str | None, bool]:
-        # parent_meta 来自最近父节点（H3/H2/H1）解析结果。
-        # 若无 id，则在标题下一行插入 ^id-xxxx；若空行后已存在，则复用并不重复插入。
-        if not parent_meta:
-            return None, False
-        block_id = parent_meta.get("block_id")
-        if block_id:
-            return block_id, False
-
-        line_idx = parent_meta.get("line_idx")
-        if line_idx is None or line_idx >= len(file_lines):
-            return None, False
-
-        block_id = self.generate_block_id()
-        insert_idx = line_idx + 1
-        existing_id, _ = self._find_metadata_line(insert_idx, file_lines, RE_BLOCK_ID_LINE)
-        if existing_id:
-            parent_meta["block_id"] = existing_id
-            return existing_id, False
-        template_line = file_lines[line_idx]
-        file_lines.insert(insert_idx, self._new_block_id_line(template_line, block_id))
-        parent_meta["block_id"] = block_id
-        return block_id, True
 
     def append_anki_id_at_line(self, file_lines: list[str], line_idx: int | None, note_id: str | int) -> bool:
         # 在 H4 标题下一行插入 ^anki-...；允许中间有空行并做去重。
@@ -247,13 +217,9 @@ class MarkdownProcessor:
                 inline_token = tokens[i + 1]
                 heading_text = inline_token.content.strip()
                 heading_pure = heading_text.strip()
-                heading_end_line_idx = token.map[1] if token.map else None
-                block_id = self._read_block_id_below_heading(heading_end_line_idx, lines_all)
-
                 latest_parents[level] = {
                     "title": heading_pure,
                     "line_idx": token.map[0] if token.map else None,
-                    "block_id": block_id,
                     "level": level,
                 }
                 # 遇到新父级后，清空其下层最近节点，保持“最近上层”语义正确。
@@ -332,8 +298,6 @@ class MarkdownProcessor:
                     ankideck_base=anki_deck_base,
                     deck_full=f"{anki_deck_base}::{parent_title}" if parent_title else anki_deck_base,
                     parent_title=parent_title,
-                    parent_block_id=parent_meta.get("block_id") if parent_meta else None,
-                    parent_line_idx=parent_meta.get("line_idx") if parent_meta else None,
                     parent_level=parent_meta.get("level") if parent_meta else None,
                     h4_heading_raw=heading_text,
                     h4_heading_pure=heading_pure,
