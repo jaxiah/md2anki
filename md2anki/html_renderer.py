@@ -167,7 +167,9 @@ class HtmlRenderer:
 
     @staticmethod
     def _restore_display_math_blocks(html_content: str, display_math_map: dict[str, str]) -> str:
-        for token, display_math in display_math_map.items():
+        # Sort longest token first to prevent short tokens from being treated as
+        # prefixes of longer ones (e.g. MATH_1 corrupting MATH_10, MATH_11, ...).
+        for token, display_math in sorted(display_math_map.items(), key=lambda kv: -len(kv[0])):
             escaped = html.escape(display_math)
             html_content = html_content.replace(f"<p>{token}</p>\n", f"<p>{escaped}</p>\n")
             html_content = html_content.replace(f"<p>{token}</p>", f"<p>{escaped}</p>")
