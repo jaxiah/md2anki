@@ -7,3 +7,4 @@ _parser_renderer_debug/
 manual_vault/
 .venv/
 .vscode/
+.claude/
