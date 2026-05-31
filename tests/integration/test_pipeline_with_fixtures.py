@@ -236,7 +236,7 @@ Back line 2
     )
 
     updated = md_file.read_text(encoding="utf-8")
-    assert "#### Card With Gaps\n^anki-9101\n" in updated
+    assert "#### Card With Gaps\n\n^anki-9101\n" in updated
     assert report.added == 1
     assert report.markdown_writebacks == ["04_add_blank_lines.md"]
 
@@ -464,9 +464,9 @@ Body C
     )
 
     updated = md_file.read_text(encoding="utf-8")
-    assert "#### Card A\n^anki-9201\n" in updated
-    assert "#### Card B\n^anki-9202\n" in updated
-    assert "#### Card C\n^anki-9203\n" in updated
+    assert "#### Card A\n\n^anki-9201\n" in updated
+    assert "#### Card B\n\n^anki-9202\n" in updated
+    assert "#### Card C\n\n^anki-9203\n" in updated
     assert report.added == 3
 
 
@@ -518,9 +518,9 @@ Body B1
     )
 
     updated = md_file.read_text(encoding="utf-8")
-    assert "#### QA1\n^anki-9301\n" in updated
-    assert "#### QA2\n^anki-9302\n" in updated
-    assert "#### QB1\n^anki-9303\n" in updated
+    assert "#### QA1\n\n^anki-9301\n" in updated
+    assert "#### QA2\n\n^anki-9302\n" in updated
+    assert "#### QB1\n\n^anki-9303\n" in updated
     assert report.added == 3
 
 

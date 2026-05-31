@@ -135,14 +135,16 @@ class MarkdownProcessor:
         return f"^anki-{note_id}{newline}"
 
     def append_anki_id_at_line(self, file_lines: list[str], line_idx: int | None, note_id: str | int) -> bool:
-        # 在 H4 标题下一行插入 ^anki-...；允许中间有空行并做去重。
+        # 在 H4 标题后空一行再插入 ^anki-...；允许中间有空行并做去重。
         if line_idx is None or not (0 <= line_idx < len(file_lines)):
             return False
         insert_idx = line_idx + 1
         metadata = self._read_h4_metadata_block(insert_idx, file_lines)
         if metadata["anki_note_id"] or metadata["no_anki"]:
             return False
-        file_lines.insert(insert_idx, self.append_anki_id_to_line(file_lines[line_idx], note_id))
+        newline, _ = self._split_newline(file_lines[line_idx])
+        newline = newline or "\n"
+        file_lines[insert_idx:insert_idx] = [newline, self.append_anki_id_to_line(file_lines[line_idx], note_id)]
         return True
 
     def append_noanki_to_line(self, line: str) -> str:
