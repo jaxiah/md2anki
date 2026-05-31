@@ -69,6 +69,12 @@ md2anki --vault-root <your-vault-path> --apply-anki-changes
 
 > apply writes to Anki for real and updates `sync_state.json`.
 
+### Windows double-click launcher
+
+The repository root provides `md2anki.cmd`. Copy it into a real Vault root and double-click it to run against that Vault. The launcher uses the `.cmd` directory as `vault-root` and runs in apply mode by default.
+
+> `md2anki.cmd` writes to Anki for real; use the command-line dry-run flow when you need a preview.
+
 ---
 
 ## Common arguments
@@ -81,6 +87,10 @@ md2anki --vault-root <your-vault-path> --apply-anki-changes
 - `--file`: only process specific Markdown file(s) (repeatable)
 - `--apply-anki-changes`: enable real writes (off by default)
 - `--no-write-back-markdown`: disable Markdown write-back in apply mode
+- `--show-progress`: show parse/media/sync progress
+- `--request-timeout-seconds`: timeout per AnkiConnect request (default: `30` seconds)
+- `--max-retries` / `--retry-backoff-seconds`: retry count and backoff for transient failures
+- `--no-fail-fast`: continue processing later notes after one note fails
 
 Single-file example:
 
@@ -153,7 +163,7 @@ The state file is used to decide whether an update is needed and avoid duplicate
 
 - Default location: `<vault-root>/sync_state.json`
 - Primary key: `anki_note_id`
-- Stores: content hash, update time, source file, etc.
+- Stores: content hash, deck, Obsidian URL, update time, source file, media upload fingerprints, etc.
 
 If you need to rebuild sync relations from scratch, back up and delete this file, then run apply again.
 
@@ -189,6 +199,10 @@ Common reasons:
 
 This is by design: to prevent the same H4 from being auto-added again in later runs.
 
+### Q4: Why does a newly added note no longer update on the next run?
+
+After a new note is added, the pipeline writes back `^anki-<id>`, then updates the Anki Back footer in the same run to use the block-level Obsidian link, and persists that final URL in state. The next run should skip it.
+
 ---
 
 ## Development and testing
@@ -199,11 +213,10 @@ Run automated tests:
 pytest -q
 ```
 
-Manual real E2E (must be explicitly enabled):
+E2E tests use a local mock AnkiConnect server by default and do not touch a real Anki database:
 
 ```powershell
-$env:MD2ANKI_E2E="1"
-python -m pytest tests/e2e/test_manual_e2e_flow.py -m e2e_manual -q
+pytest tests/e2e/test_mock_ankiconnect_flow.py -q
 ```
 
 ---

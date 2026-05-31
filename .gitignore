@@ -8,3 +8,4 @@ manual_vault/
 .venv/
 .vscode/
 .claude/
+.codegraph/

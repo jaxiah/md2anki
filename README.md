@@ -71,6 +71,12 @@ md2anki --vault-root <你的Vault路径> --apply-anki-changes
 
 > apply 会真实写入 Anki，并更新 `sync_state.json`。
 
+### Windows 双击入口
+
+仓库根目录提供 `md2anki.cmd`，适合复制到实际 Vault 根目录后双击使用。它以 `.cmd` 所在目录作为 `vault-root`，并默认执行 apply 模式。
+
+> `md2anki.cmd` 会真实写入 Anki；需要预览时请使用命令行 dry-run。
+
 ---
 
 ## 常用参数
@@ -83,6 +89,10 @@ md2anki --vault-root <你的Vault路径> --apply-anki-changes
 - `--file`：仅处理指定 Markdown（可重复）
 - `--apply-anki-changes`：开启真实写入（默认关闭）
 - `--no-write-back-markdown`：apply 时禁用 Markdown 回写
+- `--show-progress`：显示 parse/media/sync 进度
+- `--request-timeout-seconds`：单次 AnkiConnect 请求超时（默认 `30` 秒）
+- `--max-retries` / `--retry-backoff-seconds`：瞬时失败重试次数与退避时间
+- `--no-fail-fast`：单条失败后继续处理后续 note
 
 只处理单文件示例：
 
@@ -155,7 +165,7 @@ ankideck: md2ankiTest
 
 - 默认位置：`<vault-root>/sync_state.json`
 - 主键：`anki_note_id`
-- 记录：内容 hash、更新时间、来源文件等
+- 记录：内容 hash、deck、Obsidian URL、更新时间、来源文件、媒体上传指纹等
 
 如果你要“全量重建同步关系”，可以备份后删除这个文件再重新 apply。
 
@@ -191,6 +201,10 @@ ankideck: md2ankiTest
 
 这是设计行为：防止该 H4 在后续运行中被再次自动 add。
 
+### Q4: 新增 note 后为什么不会第二次再 update？
+
+新增 note 首次写入后，pipeline 会先回写 `^anki-<id>`，再同轮更新 Anki 背面 footer 为 block 级 Obsidian 链接，并把最终 URL 写入 state。因此下一次运行应直接 `skip`。
+
 ---
 
 ## 开发与测试
@@ -201,11 +215,10 @@ ankideck: md2ankiTest
 pytest -q
 ```
 
-手动真 E2E（需显式开启）：
+E2E 默认使用本地 mock AnkiConnect server，不会连接真实 Anki 数据库：
 
 ```powershell
-$env:MD2ANKI_E2E="1"
-python -m pytest tests/e2e/test_manual_e2e_flow.py -m e2e_manual -q
+pytest tests/e2e/test_mock_ankiconnect_flow.py -q
 ```
 
 ---

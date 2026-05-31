@@ -165,6 +165,38 @@ class AnkiClient:
             return True, None
         return False, str(result)
 
+    def update_note_fields(self, note_id: str, front_html: str, back_html: str) -> tuple[bool, str | None]:
+        success, result = self.invoke(
+            "updateNoteFields",
+            note={
+                "id": int(note_id),
+                "fields": {
+                    "Front": front_html,
+                    "Back": back_html,
+                },
+            },
+        )
+        if success:
+            return True, None
+        return False, str(result)
+
+    def finalize_added_note_url(self, note_id: str, rendered_note: Any) -> tuple[bool, str | None]:
+        """Persist the final block-level Obsidian footer after Markdown writeback."""
+        success, err = self.update_note_fields(
+            note_id=note_id,
+            front_html=getattr(rendered_note, "front_html", ""),
+            back_html=getattr(rendered_note, "back_html_with_footer", ""),
+        )
+        if not success:
+            return False, err
+
+        item = self.state.setdefault("items", {}).get(note_id)
+        if item is not None:
+            item["obsidian_url"] = getattr(rendered_note, "obsidian_url", None)
+            item["updated_ts"] = self._now_iso()
+            self.save_state()
+        return True, None
+
     @staticmethod
     def _compute_media_fingerprint(media: Any) -> str:
         """Content fingerprint used to skip re-uploading unchanged media across runs.
@@ -416,15 +448,10 @@ class AnkiClient:
 
                 # URL 漂移：需要重新将带正确 footer 的 HTML 发送到 Anki。
                 if url_changed:
-                    update_ok, update_err = self.invoke(
-                        "updateNoteFields",
-                        note={
-                            "id": int(note_id),
-                            "fields": {
-                                "Front": rendered.front_html,
-                                "Back": rendered.back_html_with_footer,
-                            },
-                        },
+                    update_ok, update_err = self.update_note_fields(
+                        note_id=note_id,
+                        front_html=rendered.front_html,
+                        back_html=rendered.back_html_with_footer,
                     )
                     if not update_ok:
                         result.failed += 1
@@ -513,15 +540,10 @@ class AnkiClient:
                     continue
 
             if note_id:
-                update_ok, update_err = self.invoke(
-                    "updateNoteFields",
-                    note={
-                        "id": int(note_id),
-                        "fields": {
-                            "Front": rendered.front_html,
-                            "Back": rendered.back_html_with_footer,
-                        },
-                    },
+                update_ok, update_err = self.update_note_fields(
+                    note_id=note_id,
+                    front_html=rendered.front_html,
+                    back_html=rendered.back_html_with_footer,
                 )
                 if not update_ok:
                     result.failed += 1

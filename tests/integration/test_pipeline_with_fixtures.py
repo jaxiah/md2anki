@@ -30,12 +30,18 @@ Back line
     )
 
     client = _make_client(tmp_path, apply_changes=True)
+    calls: list[str] = []
+    update_payloads: list[dict] = []
 
     def _invoke(action, **params):
+        calls.append(action)
         if action in {"createDeck", "storeMediaFile"}:
             return True, None
         if action == "addNote":
             return True, 9001
+        if action == "updateNoteFields":
+            update_payloads.append(params["note"])
+            return True, None
         raise AssertionError(f"unexpected action: {action}")
 
     client.invoke = _invoke
@@ -57,6 +63,33 @@ Back line
 
     state = json.loads((tmp_path / "sync_state.json").read_text(encoding="utf-8"))
     assert "9001" in state["items"]
+    final_url = "obsidian://open?vault=sample-notes&file=01_add%23%5Eanki-9001"
+    assert state["items"]["9001"]["obsidian_url"] == final_url
+    assert calls == ["createDeck", "addNote", "updateNoteFields"]
+    assert update_payloads[0]["id"] == 9001
+    assert final_url in update_payloads[0]["fields"]["Back"]
+
+    client_second_run = _make_client(tmp_path, apply_changes=True)
+
+    def _unexpected_invoke(*args, **kwargs):
+        raise AssertionError("second run should skip without Anki calls")
+
+    client_second_run.invoke = _unexpected_invoke
+
+    second_report = run_pipeline(
+        markdown_files=[md_file],
+        vault_root=vault_root,
+        vault_name="sample-notes",
+        sync_state_file=tmp_path / "sync_state.json",
+        apply_anki_changes=True,
+        write_back_markdown=True,
+        anki_client=client_second_run,
+    )
+
+    assert second_report.skipped == 1
+    assert second_report.updated == 0
+    assert second_report.failed == 0
+    assert second_report.markdown_writebacks == []
 
 
 def test_pipeline_delete_writeback_and_state_cleanup_in_temp_vault(tmp_path: Path):
@@ -186,6 +219,8 @@ Back line 2
             return True, None
         if action == "addNote":
             return True, 9101
+        if action == "updateNoteFields":
+            return True, None
         raise AssertionError(f"unexpected action: {action}")
 
     client.invoke = _invoke
@@ -412,6 +447,8 @@ Body C
         if action == "addNote":
             next_id["value"] += 1
             return True, next_id["value"]
+        if action == "updateNoteFields":
+            return True, None
         raise AssertionError(f"unexpected action: {action}")
 
     client.invoke = _invoke
@@ -464,6 +501,8 @@ Body B1
         if action == "addNote":
             next_id["value"] += 1
             return True, next_id["value"]
+        if action == "updateNoteFields":
+            return True, None
         raise AssertionError(f"unexpected action: {action}")
 
     client.invoke = _invoke

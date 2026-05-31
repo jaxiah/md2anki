@@ -27,6 +27,3 @@ packages = ["md2anki"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
-markers = [
-  "e2e_manual: real Anki manual E2E tests, opt-in via MD2ANKI_E2E=1",
-]

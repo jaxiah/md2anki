@@ -145,6 +145,7 @@ def run_pipeline(
     if write_back_markdown and apply_anki_changes:
         # 仅在 apply 模式回写，dry-run 永远不触碰 markdown 文件。
         writeback_by_file: dict[str, dict[str, list[dict[str, Any]]]] = {}
+        finalized_bindings: list[dict[str, Any]] = []
 
         for binding in sync_result.bindings_to_writeback:
             source_file = binding.get("source_file")
@@ -166,6 +167,7 @@ def run_pipeline(
 
             file_lines = abs_path.read_text(encoding="utf-8").splitlines(keepends=True)
             file_changed = False
+            finalized_bindings_for_file: list[dict[str, Any]] = []
 
             # 将 bind/delete/parent 合并后统一按锚点行号倒序执行，避免跨类型操作引发行号漂移。
             all_ops: list[dict[str, Any]] = []
@@ -201,6 +203,7 @@ def run_pipeline(
                         payload.get("anki_note_id"),
                     ):
                         file_changed = True
+                        finalized_bindings_for_file.append(payload)
                 elif kind == "delete":
                     # delete 成功后，删除 ^anki 行并补 ^noanki。
                     if processor.remove_anki_metadata_and_mark_noanki(file_lines, payload.get("line_idx_h4")):
@@ -209,5 +212,37 @@ def run_pipeline(
             if file_changed:
                 abs_path.write_text("".join(file_lines), encoding="utf-8")
                 _record_writeback(source_file)
+                finalized_bindings.extend(finalized_bindings_for_file)
+
+        if finalized_bindings:
+            rendered_by_anchor: dict[tuple[str | None, int | None], Any] = {}
+            for rendered in rendered_payloads:
+                parsed = getattr(rendered, "parsed", None)
+                rendered_by_anchor[
+                    (
+                        getattr(parsed, "source_file", None),
+                        getattr(parsed, "line_idx_h4", None),
+                    )
+                ] = rendered
+
+            for binding in finalized_bindings:
+                note_id = binding.get("anki_note_id")
+                source_file = binding.get("source_file")
+                line_idx_h4 = binding.get("line_idx_h4")
+                rendered = rendered_by_anchor.get((source_file, line_idx_h4))
+                if not note_id or rendered is None:
+                    continue
+
+                parsed = rendered.parsed
+                setattr(parsed, "anki_note_id", note_id)
+                finalized_rendered = renderer.render(parsed)
+                success, err = anki_client.finalize_added_note_url(note_id, finalized_rendered)
+                if not success:
+                    report.failed += 1
+                    report.errors.append(f"finalize footer failed for ^anki-{note_id}: {err}")
+                    if fail_fast:
+                        break
+                else:
+                    _emit_progress("sync", 0, 0, getattr(parsed, "h4_heading_pure", None), "footer_finalized")
 
     return report
