@@ -169,7 +169,9 @@ class MarkdownProcessor:
                 metadata["noanki_line_idx"] = noanki_line_idx - 1
 
         if metadata.get("noanki_line_idx") is None:
-            file_lines.insert(start_idx, self.append_noanki_to_line(file_lines[line_idx_h4]))
+            newline, _ = self._split_newline(file_lines[line_idx_h4])
+            newline = newline or "\n"
+            file_lines[start_idx:start_idx] = [newline, self.append_noanki_to_line(file_lines[line_idx_h4])]
             changed = True
 
         return changed

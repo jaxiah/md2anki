@@ -301,7 +301,7 @@ Back line
 
     updated = md_file.read_text(encoding="utf-8")
     assert "^anki-9003" not in updated
-    assert "#### Card\n^noanki\n" in updated
+    assert "#### Card\n\n^noanki\n" in updated
     assert report.deleted == 1
     assert report.markdown_writebacks == ["05_delete_blank_lines.md"]
 

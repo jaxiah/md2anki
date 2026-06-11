@@ -345,6 +345,17 @@ def test_remove_anki_metadata_and_mark_noanki():
     assert changed is True
     assert all("^anki-123456" not in line for line in lines)
     assert any(line.strip() == "^noanki" for line in lines)
+    assert lines[:3] == ["#### Q\n", "\n", "^noanki\n"]
+
+
+def test_remove_anki_metadata_and_mark_noanki_inserts_blank_after_h4_without_existing_gap():
+    lines = ["#### Q\n", "^anki-123456 DELETE\n", "body\n"]
+    processor = _new_processor()
+
+    changed = processor.remove_anki_metadata_and_mark_noanki(lines, 0)
+
+    assert changed is True
+    assert lines[:3] == ["#### Q\n", "\n", "^noanki\n"]
 
 
 def test_append_anki_id_at_line_noop_when_noanki_exists():
