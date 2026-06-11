@@ -1,229 +1,119 @@
 # md2anki
 
-English version: [README_en.md](README_en.md)
+Turn Obsidian-style Markdown into Anki cards, without leaving your vault.
 
-将 Obsidian 风格 Markdown（以 `####` 为卡片）同步到 Anki 的轻量工具。
+`md2anki` treats each `####` heading as a flashcard, renders the card body to HTML, uploads local images through AnkiConnect, and adds an "open in Obsidian" link back to the exact source block. Later runs only add, update, delete, or skip what changed.
 
-当前发布基线：`v0.1.0`
+<table>
+<tr>
+<th width="42%">Obsidian source</th>
+<th width="58%">Anki HTML</th>
+</tr>
+<tr>
+<td>
+
+<pre><code>---
+ankideck: Engineering::Pumps
+---
+
+#### What does the volute do in a centrifugal pump?
+
+![[pump.png|900]]
 
 ---
 
-## 这个工具能做什么
+The volute is the spiral casing around the impeller.
+It collects the high-velocity fluid leaving the impeller and,
+as the flow area gradually increases, helps convert part of
+that velocity energy into pressure energy.
+</code></pre>
 
-- 从 Markdown 提取卡片并同步到 Anki（Basic 模板，`Front/Back` 字段）。
-- 支持 `ADD / UPDATE / DELETE / SKIP`。
-- 支持图片上传（`![[...]]`）与 wiki 链接（`[[...]]`）。
-- 默认 `dry-run`（安全预览），显式开启 `apply` 才会真正写入 Anki。
-- 在 apply 模式可回写 Markdown 元信息（如 `^anki-123`、`^noanki`、父节点 `^id-xxxx`）。
+</td>
+<td>
 
----
+<div>
+  <p><strong>Front</strong></p>
+  <p>What does the volute do in a centrifugal pump?</p>
+  <img src="pump.png" alt="Centrifugal pump diagram" style="max-width: 900px; width: 100%; border: 1px solid #d0d7de; border-radius: 6px;">
+  <hr>
+  <p><strong>Back</strong></p>
+  <p>The volute is the spiral casing around the impeller. It collects the high-velocity fluid leaving the impeller and, as the flow area gradually increases, helps convert part of that velocity energy into pressure energy.</p>
+  <p><a href="#">open in Obsidian</a></p>
+</div>
 
-## 安装
+</td>
+</tr>
+</table>
 
-### 1) 环境要求
+## Why Use It
+
+- **Vault-native cards:** write normal Markdown; `####` headings become Anki notes.
+- **Safe sync loop:** dry-run by default; apply mode writes only when requested.
+- **One-click source return:** every Anki card includes an `open in Obsidian` footer that jumps back to the exact Markdown block.
+- **Stable anchors:** new cards get `^anki-<id>` written back to Markdown, so future syncs and source links stay attached to the right card.
+- **Rich rendering:** supports Markdown, tables, code blocks, math, wiki links, and `![[image.png|width]]` embeds.
+- **Incremental sync:** repeat runs skip unchanged cards and update only the notes that changed.
+
+## Install
+
+Requirements:
 
 - Python `>=3.10`
-- 已安装 Anki 桌面端
-- 已安装并启用 AnkiConnect（默认地址 `http://127.0.0.1:8765`）
-
-### 2) 安装项目
-
-在仓库根目录执行：
+- Anki desktop
+- AnkiConnect enabled at `http://127.0.0.1:8765`
 
 ```bash
 pip install -e .
-```
-
-如果需要测试依赖：
-
-```bash
 pip install -e .[test]
 ```
 
----
+## Run
 
-## 3 分钟跑通（推荐）
-
-### 第一步：先 dry-run（默认）
+Preview first. This does not write to Anki, state, or Markdown:
 
 ```bash
-md2anki --vault-root <你的Vault路径>
-```
-
-示例（PowerShell）：
-
-```powershell
 md2anki --vault-root D:/Notes/MyVault
 ```
 
-你会看到类似摘要：
-
-- `added / updated / deleted / skipped / failed`
-- `dry-run actions` 数量
-
-> dry-run 不会写 Anki、不写 state、不改 Markdown。
-
-### 第二步：确认无误后 apply
+Apply changes:
 
 ```bash
-md2anki --vault-root <你的Vault路径> --apply-anki-changes
+md2anki --vault-root D:/Notes/MyVault --apply-anki-changes
 ```
 
-> apply 会真实写入 Anki，并更新 `sync_state.json`。
+Process one file:
 
-### Windows 双击入口
-
-仓库根目录提供 `md2anki.cmd`，适合复制到实际 Vault 根目录后双击使用。它以 `.cmd` 所在目录作为 `vault-root`，并默认执行 apply 模式。
-
-> `md2anki.cmd` 会真实写入 Anki；需要预览时请使用命令行 dry-run。
-
----
-
-## 常用参数
-
-- `--vault-root`：Vault 根目录（必填）
-- `vault_name` 会由 `vault-root` 的目录名自动推导（用于 `obsidian://open` 链接）
-- `--asset-root`：资源目录（默认 `assets`）
-- `--anki-connect-url`：AnkiConnect 地址（默认 `http://127.0.0.1:8765`）
-- `--sync-state-file`：状态文件路径（默认 `<vault-root>/sync_state.json`）
-- `--file`：仅处理指定 Markdown（可重复）
-- `--apply-anki-changes`：开启真实写入（默认关闭）
-- `--no-write-back-markdown`：apply 时禁用 Markdown 回写
-- `--show-progress`：显示 parse/media/sync 进度
-- `--request-timeout-seconds`：单次 AnkiConnect 请求超时（默认 `30` 秒）
-- `--max-retries` / `--retry-backoff-seconds`：瞬时失败重试次数与退避时间
-- `--no-fail-fast`：单条失败后继续处理后续 note
-
-只处理单文件示例：
-
-```powershell
-md2anki --vault-root D:/Notes/MyVault --file "DeckA/topic.md"
+```bash
+md2anki --vault-root D:/Notes/MyVault --file "Biology/cells.md"
 ```
 
----
+Windows launcher: copy `md2anki.cmd` into a vault root and double-click it. The launcher uses its own directory as `vault-root` and runs in apply mode.
 
-## Markdown 约定（v0.1）
+## Markdown Rules
 
-### 1) 必须有 frontmatter `ankideck`
+- A file must have frontmatter `ankideck`.
+- Each `####` starts one card.
+- Text before the first body `---` is appended to the front; text after it becomes the back.
+- `^anki-123` binds a Markdown block to an Anki note.
+- `^anki-123 DELETE` deletes the note and writes `^noanki`.
+- `^noanki` skips that card.
 
-```yaml
----
-ankideck: md2ankiTest
----
-```
+## Safety
 
-如果一个 Markdown 文件不包含 `ankideck`，md2anki 会完整跳过该文件（不渲染、不同步、不回写）。
-这可以作为“文件级不纳管（opt-out）”的显式开关。
+Dry-run is the default command-line behavior. Apply mode writes to Anki and may write metadata such as `^anki-<id>` or `^noanki` back into Markdown.
 
-### 2) `####` 是卡片
+Back up your vault and Anki before large migrations.
 
-- H4 标题作为默认 Front。
-- H4 body 作为 Back。
-- 若 body 内出现首个 `---` 分隔线：
-  - 分隔线前并入 Front
-  - 分隔线后作为 Back
-
-### 3) 元信息必须是独立行
-
-- `^anki-1234567890`：绑定已有 note
-- `^anki-1234567890 DELETE`：删除该 note
-- `^noanki`：跳过该 H4
-- `^id-xxxx`：父标题 block id
-
-> 元信息与标题之间允许空行。
-
-### 4) 父节点规则
-
-`deck_full` 使用最近父标题：`H3 > H2 > H1`
-
----
-
-## 图片、链接、公式
-
-### 图片
-
-- 支持 `![[name.png]]`、`![[path/to/name.png]]`、`![[name.png|300]]`
-- 先按显式路径找 `asset_root/<ref>`，否则在 `asset_root` 下递归按文件名查找
-- 同名多图时会稳定选择一项并给 warning
-
-### Wiki 链接
-
-- `[[target|alias]]` 转换为 `obsidian://open?vault=...&file=...`
-
-### 公式
-
-- 非代码块区域：
-  - `$...$` 规范化为 `\(...\)`
-  - `$$...$$` 规范化为 `\[...\]`
-- fenced code block 内不转换
-
----
-
-## `sync_state.json` 是什么
-
-状态文件用于判断“是否需要更新”，避免重复写入。
-
-- 默认位置：`<vault-root>/sync_state.json`
-- 主键：`anki_note_id`
-- 记录：内容 hash、deck、Obsidian URL、更新时间、来源文件、媒体上传指纹等
-
-如果你要“全量重建同步关系”，可以备份后删除这个文件再重新 apply。
-
----
-
-## 安全使用建议
-
-- 永远先 dry-run，再 apply。
-- 首次 apply 建议先用 `--file` 限定 1~2 个文件验证。
-- 发布或大改前先备份 Vault 与 Anki。
-
----
-
-## 常见问题
-
-### Q1: 为什么没有写入 Anki？
-
-检查：
-
-- 是否传了 `--apply-anki-changes`
-- Anki 是否已启动
-- AnkiConnect 是否可访问（默认 `127.0.0.1:8765`）
-
-### Q2: 为什么某个 H4 被跳过了？
-
-常见原因：
-
-- 存在 `^noanki`
-- frontmatter 缺少 `ankideck`
-- 内容 hash 未变化（被判定为 `skip`）
-
-### Q3: 删除后为什么写了 `^noanki`？
-
-这是设计行为：防止该 H4 在后续运行中被再次自动 add。
-
-### Q4: 新增 note 后为什么不会第二次再 update？
-
-新增 note 首次写入后，pipeline 会先回写 `^anki-<id>`，再同轮更新 Anki 背面 footer 为 block 级 Obsidian 链接，并把最终 URL 写入 state。因此下一次运行应直接 `skip`。
-
----
-
-## 开发与测试
-
-运行自动化测试：
+## Development
 
 ```bash
 pytest -q
-```
-
-E2E 默认使用本地 mock AnkiConnect server，不会连接真实 Anki 数据库：
-
-```powershell
 pytest tests/e2e/test_mock_ankiconnect_flow.py -q
 ```
 
----
+E2E tests use a local mock AnkiConnect server and do not touch a real Anki database.
 
-## 参考文档
+## References
 
-- Gold Reference 设计文档：`doc/design_gold_reference_v0.1.md`
-- 发布清单：`doc/release_checklist_v0.1.md`
+- Design notes: [doc/design_gold_reference_v0.1.md](doc/design_gold_reference_v0.1.md)
+- Release checklist: [doc/release_checklist_v0.1.md](doc/release_checklist_v0.1.md)
