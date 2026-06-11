@@ -6,38 +6,40 @@ Turn Obsidian-style Markdown into Anki cards, without leaving your vault.
 
 <table>
 <tr>
-<th width="42%">Obsidian source</th>
-<th width="58%">Anki HTML</th>
+<th width="50%">Obsidian source</th>
+<th width="50%">Anki HTML</th>
 </tr>
 <tr>
-<td>
+<td width="50%" valign="top">
 
 <pre><code>---
 ankideck: Engineering::Pumps
 ---
 
-#### What does the volute do in a centrifugal pump?
+#### What does a pump volute do?
 
 ![[pump.png|900]]
 
 ---
 
-The volute is the spiral casing around the impeller.
-It collects the high-velocity fluid leaving the impeller and,
-as the flow area gradually increases, helps convert part of
-that velocity energy into pressure energy.
+The volute is the spiral casing
+around the impeller.
+
+It collects high-velocity flow
+from the impeller and helps
+convert velocity into pressure.
 </code></pre>
 
 </td>
-<td>
+<td width="50%" valign="top">
 
 <div>
   <p><strong>Front</strong></p>
-  <p>What does the volute do in a centrifugal pump?</p>
-  <img src="pump.png" alt="Centrifugal pump diagram" style="max-width: 900px; width: 100%; border: 1px solid #d0d7de; border-radius: 6px;">
+  <p>What does a pump volute do?</p>
+  <img src="pump.png" alt="Centrifugal pump diagram" width="900">
   <hr>
   <p><strong>Back</strong></p>
-  <p>The volute is the spiral casing around the impeller. It collects the high-velocity fluid leaving the impeller and, as the flow area gradually increases, helps convert part of that velocity energy into pressure energy.</p>
+  <p>The volute is the spiral casing around the impeller. It collects high-velocity flow from the impeller and helps convert velocity into pressure.</p>
   <p><a href="#">open in Obsidian</a></p>
 </div>
 
