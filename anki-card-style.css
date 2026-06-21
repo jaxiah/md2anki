@@ -1,0 +1,376 @@
+@font-face {
+  font-family: maple_font;
+  src: url('_maple.ttf');
+}
+
+* {
+  box-sizing: border-box;
+}
+
+.card {
+  --card-bg: #fafafa;
+  --text-fg: #303030;
+  --muted-fg: #999999;
+  --link-fg: #0969da;
+
+  --code-bg: #f4f4f4;
+  --code-fg: #24292f;
+  --code-border: #dddddd;
+
+  --table-border: #cccccc;
+  --table-th-bg: #eeeeee;
+  --table-zebra-bg: #f7f7f7;
+
+  --blockquote-bg: #f9f9f9;
+  --blockquote-border: #cccccc;
+  --blockquote-fg: #666666;
+
+  --hint-bg: #fff8dc;
+  --hint-border: #eadf9f;
+  --hint-fg: #6b5a00;
+
+  --syntax-comment: #6a737d;
+  --syntax-keyword: #d73a49;
+  --syntax-string: #032f62;
+  --syntax-number: #005cc5;
+  --syntax-function: #6f42c1;
+  --syntax-variable: #e36209;
+  --syntax-operator: #24292f;
+  --syntax-punctuation: #586069;
+
+  font-family: maple_font;
+  font-size: 16px;
+  line-height: 1.5;
+  text-align: left;
+  color: var(--text-fg);
+  background-color: var(--card-bg);
+  padding: 12px 16px;
+}
+
+.card.nightMode,
+.nightMode .card,
+.card.night_mode,
+.night_mode .card {
+  --card-bg: #1f2328;
+  --text-fg: #d8dee4;
+  --muted-fg: #9aa7b2;
+  --link-fg: #79c0ff;
+
+  --code-bg: #151b23;
+  --code-fg: #d8dee4;
+  --code-border: #3d444d;
+
+  --table-border: #3d444d;
+  --table-th-bg: #2b313a;
+  --table-zebra-bg: #242a32;
+
+  --blockquote-bg: #242a32;
+  --blockquote-border: #539bf5;
+  --blockquote-fg: #c9d1d9;
+
+  --hint-bg: #2f2a18;
+  --hint-border: #8a6d1d;
+  --hint-fg: #f0d98c;
+
+  --syntax-comment: #8b949e;
+  --syntax-keyword: #ff7b72;
+  --syntax-string: #a5d6ff;
+  --syntax-number: #79c0ff;
+  --syntax-function: #d2a8ff;
+  --syntax-variable: #ffa657;
+  --syntax-operator: #d8dee4;
+  --syntax-punctuation: #c9d1d9;
+}
+
+a {
+  color: var(--link-fg);
+}
+
+.deck,
+table.declension td:first-child {
+  color: var(--muted-fg);
+  font-size: 12px;
+}
+
+.deck {
+  font-size: 10px;
+}
+
+.hint {
+  margin: 0.6em 0;
+  padding: 0.45em 0.65em;
+  color: var(--hint-fg);
+  background-color: var(--hint-bg);
+  border: 1px solid var(--hint-border);
+  border-radius: 4px;
+  font-size: 12px;
+}
+
+.letter {
+  font-size: 32px;
+}
+
+.code {
+  font-family: maple_font;
+  font-size: 16px;
+}
+
+h1,
+h2,
+h3,
+h4 {
+  margin: 0.6em 0 0.3em;
+  color: var(--text-fg);
+  font-weight: bold;
+}
+
+h1 { font-size: 1.4em; }
+h2 { font-size: 1.25em; }
+h3 { font-size: 1.15em; }
+h4 { font-size: 1.05em; }
+
+p {
+  margin: 0.4em 0;
+}
+
+ul,
+ol {
+  margin: 0.3em 0 0.3em 1.5em;
+}
+
+table {
+  margin: 0.6em auto;
+  color: var(--text-fg);
+  border-collapse: collapse;
+  border: 1px solid var(--table-border);
+  font-family: maple_font;
+  font-size: 16px;
+}
+
+table td,
+table th {
+  border: 1px solid var(--table-border);
+  padding: 6px 10px;
+  text-align: left;
+}
+
+table th {
+  background-color: var(--table-th-bg);
+  font-weight: bold;
+}
+
+table tr:nth-child(even) td {
+  background-color: var(--table-zebra-bg);
+}
+
+table.declension {
+  text-align: left;
+}
+
+table.declension td:first-child {
+  text-align: right;
+}
+
+table.i-umlaut td {
+  border: 1px solid var(--table-border);
+  height: 2em;
+  width: 4.5em;
+}
+
+code {
+  color: var(--code-fg);
+  background-color: var(--code-bg);
+  font-family: maple_font;
+  font-size: 14px;
+  padding: 1px 3px;
+  border: 1px solid var(--code-border);
+  border-radius: 3px;
+  white-space: nowrap;
+}
+
+pre {
+  margin: 0.6em 0;
+  padding: 8px 10px;
+  overflow-x: auto;
+  color: var(--code-fg);
+  background-color: var(--code-bg);
+  border: 1px solid var(--code-border);
+  border-radius: 4px;
+  font-family: maple_font;
+  font-size: 16px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+pre code {
+  padding: 0;
+  color: inherit;
+  background: transparent;
+  border: none;
+  white-space: pre-wrap;
+}
+
+pre code span {
+  background: transparent;
+}
+
+.hljs,
+pre code.hljs,
+pre code[class*="language-"] {
+  color: inherit;
+  background: transparent;
+}
+
+.highlight,
+.codehilite {
+  background: transparent;
+}
+
+.highlight pre,
+.codehilite pre {
+  margin: 0.6em 0;
+}
+
+/* Class-based syntax highlighting: highlight.js, Prism, and common Pygments classes. */
+.hljs-comment,
+.token.comment,
+.token.prolog,
+.token.doctype,
+.token.cdata,
+.c,
+.ch,
+.c1,
+.cm,
+.cp,
+.cpf,
+.cs {
+  color: var(--syntax-comment) !important;
+}
+
+.hljs-keyword,
+.hljs-literal,
+.token.keyword,
+.token.boolean,
+.token.constant,
+.k,
+.kd,
+.kc,
+.kn,
+.kp,
+.kr,
+.kt,
+.ow {
+  color: var(--syntax-keyword) !important;
+}
+
+.hljs-string,
+.token.string,
+.token.char,
+.token.regex,
+.s,
+.sa,
+.s1,
+.s2,
+.sb,
+.sc,
+.sd,
+.se,
+.sh,
+.si,
+.sx,
+.sr,
+.ss,
+.dl {
+  color: var(--syntax-string) !important;
+}
+
+.hljs-number,
+.token.number,
+.m,
+.mb,
+.mh,
+.mi,
+.mf,
+.mo,
+.il {
+  color: var(--syntax-number) !important;
+}
+
+.hljs-title,
+.hljs-function,
+.hljs-title.function_,
+.hljs-title.class_,
+.token.function,
+.token.class-name,
+.token.decorator,
+.nc,
+.nd,
+.nf,
+.fm {
+  color: var(--syntax-function) !important;
+}
+
+.hljs-variable,
+.hljs-built_in,
+.hljs-params,
+.token.variable,
+.token.builtin,
+.token.parameter,
+.na,
+.nb,
+.bp,
+.no,
+.nv,
+.vc,
+.vg,
+.vi,
+.vm {
+  color: var(--syntax-variable) !important;
+}
+
+.hljs-operator,
+.token.operator,
+.o {
+  color: var(--syntax-operator) !important;
+}
+
+.hljs-punctuation,
+.token.punctuation,
+.p {
+  color: var(--syntax-punctuation) !important;
+}
+
+.hljs-meta,
+.hljs-attr,
+.hljs-name,
+.token.property,
+.token.attr-name,
+.nt {
+  color: var(--syntax-variable) !important;
+}
+
+.nightMode pre code span[style],
+.nightMode .highlight span[style],
+.nightMode .codehilite span[style],
+.night_mode pre code span[style],
+.night_mode .highlight span[style],
+.night_mode .codehilite span[style] {
+  color: var(--code-fg) !important;
+}
+
+blockquote {
+  margin: 0.8em 0;
+  padding: 0.4em 0 0.4em 1em;
+  color: var(--blockquote-fg);
+  background-color: var(--blockquote-bg);
+  border-left: 4px solid var(--blockquote-border);
+  font-style: italic;
+}
+
+img {
+  display: block;
+  margin: 0.6em auto;
+  max-width: 100%;
+  height: auto;
+  border-radius: 4px;
+}
