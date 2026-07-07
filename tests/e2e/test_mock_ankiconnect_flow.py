@@ -260,11 +260,11 @@ def test_delete_existing_note(tmp_path: Path):
         assert int(delete_note_id) not in server.state.notes
         assert delete_note_id not in _load_state(vault_root)["items"]
         delete_section = _extract_section(_read(flow_file), "Card DeleteTarget")
-        assert "^noanki" in delete_section
+        assert "^nosrs" in delete_section
         assert re.search(r"\^anki-\d+", delete_section) is None
 
 
-def test_noanki_after_delete_is_not_readded(tmp_path: Path):
+def test_nosrs_after_delete_is_not_readded(tmp_path: Path):
     vault_root = tmp_path / "mock_vault"
     _write_vault(vault_root)
 
@@ -292,11 +292,11 @@ def test_noanki_after_delete_is_not_readded(tmp_path: Path):
         assert report.added == 0
         assert server.state.action_count("addNote") == add_count_after_delete
         delete_section = _extract_section(_read(flow_file), "Card DeleteTarget")
-        assert "^noanki" in delete_section
+        assert "^nosrs" in delete_section
         assert re.search(r"\^anki-\d+", delete_section) is None
 
 
-def test_delete_noanki_conflict_prefers_delete(tmp_path: Path):
+def test_delete_nosrs_conflict_prefers_delete(tmp_path: Path):
     vault_root = tmp_path / "mock_vault"
     _write_vault(vault_root)
 
@@ -305,21 +305,21 @@ def test_delete_noanki_conflict_prefers_delete(tmp_path: Path):
         flow_file = vault_root / "01_flow.md"
         conflict_note_id = _note_id_from_section(_read(flow_file), "Card ConflictTarget")
 
-        def _mark_delete_and_noanki(section: str) -> str:
+        def _mark_delete_and_nosrs(section: str) -> str:
             section = re.sub(
                 rf"\^anki-{conflict_note_id}\s*$",
                 f"^anki-{conflict_note_id} DELETE",
                 section,
                 flags=re.MULTILINE,
             )
-            return section.replace(f"^anki-{conflict_note_id} DELETE", f"^anki-{conflict_note_id} DELETE\n\n^noanki", 1)
+            return section.replace(f"^anki-{conflict_note_id} DELETE", f"^anki-{conflict_note_id} DELETE\n\n^nosrs", 1)
 
-        _replace_in_section(flow_file, "Card ConflictTarget", _mark_delete_and_noanki)
+        _replace_in_section(flow_file, "Card ConflictTarget", _mark_delete_and_nosrs)
         report = _run_apply(vault_root, server)
         assert report.failed == 0
         assert report.deleted == 1
         conflict_section = _extract_section(_read(flow_file), "Card ConflictTarget")
-        assert conflict_section.count("^noanki") == 1
+        assert conflict_section.count("^nosrs") == 1
         assert re.search(r"\^anki-\d+", conflict_section) is None
 
 

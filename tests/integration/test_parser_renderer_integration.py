@@ -216,13 +216,13 @@ def test_blank_lines_between_header_and_metadata_are_handled_end_to_end():
     _dump_case_result("blank_lines_between_header_and_metadata_are_handled_end_to_end", doc, [rendered])
 
 
-def test_noanki_marked_h4_is_skipped_from_parser_renderer_flow():
+def test_nosrs_marked_h4_is_skipped_from_parser_renderer_flow():
     processor, renderer = _build_pipeline()
-    doc = processor.parse_file(FIXTURE_VAULT / "07_noanki.md")
+    doc = processor.parse_file(FIXTURE_VAULT / "07_nosrs.md")
 
     assert len(doc.notes) == 0
 
-    _dump_case_result("noanki_marked_h4_is_skipped_from_parser_renderer_flow", doc, [])
+    _dump_case_result("nosrs_marked_h4_is_skipped_from_parser_renderer_flow", doc, [])
 
 
 def test_h4_without_parent_uses_base_deck_and_file_stem_footer():

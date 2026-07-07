@@ -3,6 +3,8 @@ import os
 from dataclasses import asdict
 from pathlib import Path
 
+import pytest
+
 from md2anki import MarkdownProcessor
 
 
@@ -206,6 +208,42 @@ answer line 2
     assert doc.notes[0].back_md == "answer line 1\nanswer line 2"
 
 
+def test_parse_srs_id_allows_blank_lines_before_id_and_not_in_body():
+    content = """---
+ankideck: D
+---
+### Parent
+#### Q with srs
+
+
+^srs-1783400717267
+answer line
+"""
+    doc = _parse_case("srs_id_with_blank_lines", content)
+
+    assert len(doc.notes) == 1
+    assert doc.notes[0].srs_note_id == "1783400717267"
+    assert doc.notes[0].srs_meta_line_idx is not None
+    assert "^srs-1783400717267" not in doc.notes[0].back_md
+    assert doc.notes[0].back_md == "answer line"
+
+
+def test_parse_nosrs_skips_h4_note():
+    content = """---
+ankideck: D
+---
+### Parent
+#### Q no srs
+
+
+^nosrs
+answer line
+"""
+    doc = _parse_case("nosrs_skips_note", content)
+
+    assert doc.notes == []
+
+
 def test_parse_file_returns_relative_source_path():
     content = """---
 ankideck: ABC
@@ -273,6 +311,36 @@ def test_append_anki_id_to_line_creates_standalone_id_line():
     assert updated == "^anki-999\n"
 
 
+def test_append_srs_id_at_line_inserts_standalone_id_line():
+    lines = ["#### Q\n", "answer\n"]
+    processor = _new_processor()
+
+    wrote = processor.append_srs_id_at_line(lines, 0, "1783400717267")
+
+    assert wrote is True
+    assert lines[:3] == ["#### Q\n", "\n", "^srs-1783400717267\n"]
+
+
+def test_append_srs_id_at_line_noop_when_nosrs_exists():
+    lines = ["#### Q\n", "\n", "^nosrs\n", "answer\n"]
+    processor = _new_processor()
+
+    wrote = processor.append_srs_id_at_line(lines, 0, "1783400717267")
+
+    assert wrote is False
+    assert all("^srs-1783400717267" not in line for line in lines)
+
+
+def test_append_anki_id_at_line_noop_when_nosrs_exists():
+    lines = ["#### Q\n", "\n", "^nosrs\n", "answer\n"]
+    processor = _new_processor()
+
+    wrote = processor.append_anki_id_at_line(lines, 0, "777")
+
+    assert wrote is False
+    assert all("^anki-777" not in line for line in lines)
+
+
 def test_append_anki_id_at_line_noop_when_next_line_already_has_id():
     lines = ["#### Q\n", "\n", "\n", "^anki-123\n", "answer\n"]
     processor = _new_processor()
@@ -302,64 +370,120 @@ answer
     assert "^anki-123456" not in note.back_md
 
 
-def test_parse_noanki_skips_h4_note():
+def test_parse_del_alias_requested_from_anki_meta_line():
     content = """---
 ankideck: D
 ---
 ### Parent
 #### Q
-^noanki
+^anki-123456 del
 answer
 """
-    doc = _parse_case("parse_noanki_skips", content)
+    doc = _parse_case("parse_del_alias_requested", content)
+
+    assert len(doc.notes) == 1
+    note = doc.notes[0]
+    assert note.anki_note_id == "123456"
+    assert note.delete_requested is True
+    assert "^anki-123456" not in note.back_md
+
+
+def test_parse_nosrs_skips_h4_note():
+    content = """---
+ankideck: D
+---
+### Parent
+#### Q
+^nosrs
+answer
+"""
+    doc = _parse_case("parse_nosrs_skips", content)
 
     assert len(doc.notes) == 0
 
 
-def test_parse_noanki_and_delete_keeps_note_for_delete_flow():
+def test_parse_nosrs_and_delete_keeps_note_for_delete_flow():
     content = """---
 ankideck: D
 ---
 ### Parent
 #### Q
 ^anki-123456 DELETE
-^noanki
+^nosrs
 answer
 """
-    doc = _parse_case("parse_noanki_and_delete", content)
+    doc = _parse_case("parse_nosrs_and_delete", content)
 
     assert len(doc.notes) == 1
     note = doc.notes[0]
     assert note.anki_note_id == "123456"
     assert note.delete_requested is True
     assert note.no_anki is True
-    assert "^noanki" not in note.back_md
+    assert "^nosrs" not in note.back_md
 
 
-def test_remove_anki_metadata_and_mark_noanki():
+def test_remove_anki_metadata_and_mark_nosrs():
     lines = ["#### Q\n", "\n", "^anki-123456 DELETE\n", "body\n"]
     processor = _new_processor()
 
-    changed = processor.remove_anki_metadata_and_mark_noanki(lines, 0)
+    changed = processor.remove_anki_metadata_and_mark_nosrs(lines, 0)
 
     assert changed is True
     assert all("^anki-123456" not in line for line in lines)
-    assert any(line.strip() == "^noanki" for line in lines)
-    assert lines[:3] == ["#### Q\n", "\n", "^noanki\n"]
+    assert any(line.strip() == "^nosrs" for line in lines)
+    assert lines[:3] == ["#### Q\n", "\n", "^nosrs\n"]
 
 
-def test_remove_anki_metadata_and_mark_noanki_inserts_blank_after_h4_without_existing_gap():
+def test_remove_anki_metadata_and_mark_nosrs_inserts_blank_after_h4_without_existing_gap():
     lines = ["#### Q\n", "^anki-123456 DELETE\n", "body\n"]
     processor = _new_processor()
 
-    changed = processor.remove_anki_metadata_and_mark_noanki(lines, 0)
+    changed = processor.remove_anki_metadata_and_mark_nosrs(lines, 0)
 
     assert changed is True
-    assert lines[:3] == ["#### Q\n", "\n", "^noanki\n"]
+    assert lines[:3] == ["#### Q\n", "\n", "^nosrs\n"]
 
 
-def test_append_anki_id_at_line_noop_when_noanki_exists():
-    lines = ["#### Q\n", "\n", "^noanki\n", "answer\n"]
+@pytest.mark.parametrize(
+    ("lines", "expected"),
+    [
+        (
+            ["#### Q\n", "^anki-123 DEL\n", "body\n"],
+            ["#### Q\n", "\n", "^nosrs\n", "body\n"],
+        ),
+        (
+            ["#### Q\n", "\n", "^anki-123 DEL\n", "body\n"],
+            ["#### Q\n", "\n", "^nosrs\n", "body\n"],
+        ),
+        (
+            ["#### Q\n", "\n", "\n", "^anki-123 DEL\n", "body\n"],
+            ["#### Q\n", "\n", "^nosrs\n", "body\n"],
+        ),
+        (
+            ["#### Q\n", "^anki-123 DEL\n", "\n", "body\n"],
+            ["#### Q\n", "\n", "^nosrs\n", "body\n"],
+        ),
+        (
+            ["#### Q\n", "\n", "^anki-123 DEL\n", "\n", "body\n"],
+            ["#### Q\n", "\n", "^nosrs\n", "body\n"],
+        ),
+        (
+            ["#### Q\n", "\n", "^anki-123 DEL\n", "\n", "^nosrs\n", "\n", "body\n"],
+            ["#### Q\n", "\n", "^nosrs\n", "body\n"],
+        ),
+    ],
+)
+def test_remove_anki_metadata_and_mark_nosrs_normalizes_metadata_spacing(lines, expected):
+    processor = _new_processor()
+
+    changed = processor.remove_anki_metadata_and_mark_nosrs(lines, 0)
+
+    assert changed is True
+    assert lines == expected
+
+
+def test_append_anki_id_at_line_noop_when_nosrs_exists():
+    lines = ["#### Q\n", "\n", "^nosrs\n", "answer\n"]
     processor = _new_processor()
 
     wrote = processor.append_anki_id_at_line(lines, 0, "777")

@@ -148,7 +148,7 @@ Back line
 
     updated = md_file.read_text(encoding="utf-8")
     assert "^anki-9002" not in updated
-    assert "^noanki" in updated
+    assert "^nosrs" in updated
     assert report.deleted == 1
     assert report.markdown_writebacks == ["02_delete.md"]
 
@@ -301,15 +301,15 @@ Back line
 
     updated = md_file.read_text(encoding="utf-8")
     assert "^anki-9003" not in updated
-    assert "#### Card\n\n^noanki\n" in updated
+    assert "#### Card\n\n^nosrs\n" in updated
     assert report.deleted == 1
     assert report.markdown_writebacks == ["05_delete_blank_lines.md"]
 
 
-def test_pipeline_noanki_with_multiple_blank_lines_is_skipped(tmp_path: Path):
+def test_pipeline_nosrs_with_multiple_blank_lines_is_skipped(tmp_path: Path):
     vault_root = tmp_path / "vault"
     vault_root.mkdir(parents=True, exist_ok=True)
-    md_file = vault_root / "06_noanki_blank_lines.md"
+    md_file = vault_root / "06_nosrs_blank_lines.md"
     original = """---
 ankideck: DeckA
 ---
@@ -317,7 +317,7 @@ ankideck: DeckA
 #### Card
 
 
-^noanki
+^nosrs
 
 
 Back line
@@ -327,7 +327,7 @@ Back line
     client = _make_client(tmp_path, apply_changes=True)
 
     def _unexpected_invoke(*args, **kwargs):
-        raise AssertionError("invoke should not be called for noanki-only note")
+        raise AssertionError("invoke should not be called for nosrs-only note")
 
     client.invoke = _unexpected_invoke
 
@@ -346,10 +346,10 @@ Back line
     assert report.markdown_writebacks == []
 
 
-def test_pipeline_delete_and_noanki_conflict_with_blank_lines_prefers_delete(tmp_path: Path):
+def test_pipeline_delete_and_nosrs_conflict_with_blank_lines_prefers_delete(tmp_path: Path):
     vault_root = tmp_path / "vault"
     vault_root.mkdir(parents=True, exist_ok=True)
-    md_file = vault_root / "07_delete_noanki_conflict.md"
+    md_file = vault_root / "07_delete_nosrs_conflict.md"
     md_file.write_text(
         """---
 ankideck: DeckA
@@ -361,7 +361,7 @@ ankideck: DeckA
 ^anki-9010 DELETE
 
 
-^noanki
+^nosrs
 
 
 Back line
@@ -378,7 +378,7 @@ Back line
                     "9010": {
                         "content_hash": "old",
                         "updated_ts": "2026-03-01T00:00:00Z",
-                        "source_file": "07_delete_noanki_conflict.md",
+                        "source_file": "07_delete_nosrs_conflict.md",
                         "h4_heading_pure": "Card",
                     }
                 },
@@ -409,9 +409,9 @@ Back line
 
     updated = md_file.read_text(encoding="utf-8")
     assert "^anki-9010" not in updated
-    assert updated.count("^noanki") == 1
+    assert updated.count("^nosrs") == 1
     assert report.deleted == 1
-    assert report.markdown_writebacks == ["07_delete_noanki_conflict.md"]
+    assert report.markdown_writebacks == ["07_delete_nosrs_conflict.md"]
 
     state = json.loads(state_file.read_text(encoding="utf-8"))
     assert "9010" not in state["items"]

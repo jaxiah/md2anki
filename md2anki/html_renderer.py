@@ -37,12 +37,28 @@ class RenderedNote:
 class HtmlRenderer:
     """将 ParsedNote 渲染为 HTML，并收集媒体上传所需的 payload。"""
 
-    def __init__(self, vault_name: str, vault_root: Path, asset_root: str = "assets"):
+    def __init__(
+        self,
+        vault_name: str,
+        vault_root: Path,
+        asset_root: str = "assets",
+        footer_anchor_attr: str = "anki_note_id",
+        footer_anchor_prefix: str = "anki",
+    ):
         self.vault_name = vault_name
         self.vault_root = Path(vault_root).absolute()
         self.asset_root = asset_root
         self.assets_dir = self.vault_root / asset_root
-        self.md = MarkdownIt("gfm-like", {"html": True, "breaks": True, "linkify": False})
+        self.footer_anchor_attr = footer_anchor_attr
+        self.footer_anchor_prefix = footer_anchor_prefix
+        self.md = MarkdownIt(
+            "gfm-like",
+            {
+                "html": True,
+                "breaks": True,
+                "linkify": False,
+            },
+        )
 
     def render(self, note) -> RenderedNote:
         # front/back 分别渲染，最后统一拼接跳转 footer（指向笔记自身）。
@@ -223,12 +239,12 @@ class HtmlRenderer:
 
     def _build_note_url(self, note: Any) -> str:
         # 将锚点并入 file 参数整体编码，避免在外部 webview 中 fragment 丢失。
-        # 若 note 已有 anki_note_id，深链到具体卡片（^anki-<id>）；否则仅链接到文件。
+        # 若 note 已有配置的同步 id，深链到具体卡片块；否则仅链接到文件。
         source_rel = str(note.source_file).replace("\\", "/")
         file_without_md = source_rel[:-3] if source_rel.lower().endswith(".md") else source_rel
-        anki_note_id = getattr(note, "anki_note_id", None)
-        if anki_note_id:
-            target = f"{file_without_md}#^anki-{anki_note_id}"
+        note_id = getattr(note, self.footer_anchor_attr, None)
+        if note_id:
+            target = f"{file_without_md}#^{self.footer_anchor_prefix}-{note_id}"
         else:
             target = file_without_md
 

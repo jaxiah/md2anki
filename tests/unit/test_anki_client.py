@@ -65,7 +65,7 @@ def test_sync_dry_run_has_no_side_effects(tmp_path: Path):
     assert result.deleted == 0
     assert result.failed == 0
     assert result.skipped == 1
-    assert {item["action"] for item in result.dry_run_actions} == {"would_add", "would_delete", "skip_noanki"}
+    assert {item["action"] for item in result.dry_run_actions} == {"would_add", "would_delete", "skip_nosrs"}
     assert not (tmp_path / "sync_state.json").exists()
 
 

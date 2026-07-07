@@ -9,8 +9,10 @@ from markdown_it import MarkdownIt
 from mdit_py_plugins.front_matter import front_matter_plugin
 
 RE_ANKI_ID_LINE = re.compile(r"^[ \t]*\^anki-(\d+)[ \t]*$")
-RE_ANKI_META_LINE = re.compile(r"^[ \t]*\^anki-(\d+)(?:[ \t]+(DELETE))?[ \t]*$", re.IGNORECASE)
-RE_NOANKI_LINE = re.compile(r"^[ \t]*\^noanki[ \t]*$", re.IGNORECASE)
+RE_ANKI_META_LINE = re.compile(r"^[ \t]*\^anki-(\d+)(?:[ \t]+(DEL|DELETE))?[ \t]*$", re.IGNORECASE)
+RE_SRS_ID_LINE = re.compile(r"^[ \t]*\^srs-(\d+)[ \t]*$")
+RE_SRS_META_LINE = re.compile(r"^[ \t]*\^srs-(\d+)(?:[ \t]+(DEL|DELETE))?[ \t]*$", re.IGNORECASE)
+RE_NOSRS_LINE = re.compile(r"^[ \t]*\^nosrs[ \t]*$", re.IGNORECASE)
 RE_BLOCK_ID_LINE = re.compile(r"^[ \t]*\^(id-[A-Za-z0-9-]+)[ \t]*$")
 
 
@@ -26,8 +28,11 @@ class ParsedNote:
     h4_heading_pure: str
     anki_note_id: str | None
     anki_meta_line_idx: int | None
+    srs_note_id: str | None
+    srs_meta_line_idx: int | None
     delete_requested: bool
     no_anki: bool
+    no_srs: bool
     front_md: str
     back_md: str
     split_by_separator: bool
@@ -47,6 +52,8 @@ class MarkdownProcessor:
     约定：
     - 父节点 id 使用独立行：^id-xxxx（位于 H1/H2/H3 标题之后，可有空行）
     - H4 的 anki id 使用独立行：^anki-<数字>（位于 H4 标题之后，可有空行）
+    - H4 的 SRS id 使用独立行：^srs-<数字>（位于 H4 标题之后，可有空行）
+    - 跳过 SRS 使用独立行：^nosrs（位于 H4 标题之后，可有空行）
     """
 
     def __init__(self, vault_root: Path):
@@ -69,9 +76,12 @@ class MarkdownProcessor:
         metadata: dict[str, Any] = {
             "anki_note_id": None,
             "anki_meta_line_idx": None,
+            "srs_note_id": None,
+            "srs_meta_line_idx": None,
             "delete_requested": False,
             "no_anki": False,
-            "noanki_line_idx": None,
+            "no_srs": False,
+            "nosrs_line_idx": None,
             "last_meta_line_idx": None,
         }
         if start_line_idx is None or start_line_idx >= len(lines_all):
@@ -94,10 +104,20 @@ class MarkdownProcessor:
                 idx += 1
                 continue
 
-            noanki_match = RE_NOANKI_LINE.match(candidate)
-            if noanki_match:
+            srs_match = RE_SRS_META_LINE.match(candidate)
+            if srs_match:
+                metadata["srs_note_id"] = srs_match.group(1)
+                metadata["srs_meta_line_idx"] = idx
+                metadata["delete_requested"] = metadata["delete_requested"] or bool(srs_match.group(2))
+                metadata["last_meta_line_idx"] = idx
+                idx += 1
+                continue
+
+            nosrs_match = RE_NOSRS_LINE.match(candidate)
+            if nosrs_match:
                 metadata["no_anki"] = True
-                metadata["noanki_line_idx"] = idx
+                metadata["no_srs"] = True
+                metadata["nosrs_line_idx"] = idx
                 metadata["last_meta_line_idx"] = idx
                 idx += 1
                 continue
@@ -134,25 +154,43 @@ class MarkdownProcessor:
         newline = newline or "\n"
         return f"^anki-{note_id}{newline}"
 
+    def append_srs_id_to_line(self, line: str, note_id: str | int) -> str:
+        newline, _ = self._split_newline(line)
+        newline = newline or "\n"
+        return f"^srs-{note_id}{newline}"
+
     def append_anki_id_at_line(self, file_lines: list[str], line_idx: int | None, note_id: str | int) -> bool:
         # 在 H4 标题后空一行再插入 ^anki-...；允许中间有空行并做去重。
         if line_idx is None or not (0 <= line_idx < len(file_lines)):
             return False
         insert_idx = line_idx + 1
         metadata = self._read_h4_metadata_block(insert_idx, file_lines)
-        if metadata["anki_note_id"] or metadata["no_anki"]:
+        if metadata["anki_note_id"] or metadata["no_anki"] or metadata["no_srs"]:
             return False
         newline, _ = self._split_newline(file_lines[line_idx])
         newline = newline or "\n"
         file_lines[insert_idx:insert_idx] = [newline, self.append_anki_id_to_line(file_lines[line_idx], note_id)]
         return True
 
-    def append_noanki_to_line(self, line: str) -> str:
+    def append_srs_id_at_line(self, file_lines: list[str], line_idx: int | None, note_id: str | int) -> bool:
+        # 在 H4 标题后空一行再插入 ^srs-...；允许中间有空行并做去重。
+        if line_idx is None or not (0 <= line_idx < len(file_lines)):
+            return False
+        insert_idx = line_idx + 1
+        metadata = self._read_h4_metadata_block(insert_idx, file_lines)
+        if metadata["srs_note_id"] or metadata["no_anki"] or metadata["no_srs"]:
+            return False
+        newline, _ = self._split_newline(file_lines[line_idx])
+        newline = newline or "\n"
+        file_lines[insert_idx:insert_idx] = [newline, self.append_srs_id_to_line(file_lines[line_idx], note_id)]
+        return True
+
+    def append_nosrs_to_line(self, line: str) -> str:
         newline, _ = self._split_newline(line)
         newline = newline or "\n"
-        return f"^noanki{newline}"
+        return f"^nosrs{newline}"
 
-    def remove_anki_metadata_and_mark_noanki(self, file_lines: list[str], line_idx_h4: int | None) -> bool:
+    def remove_anki_metadata_and_mark_nosrs(self, file_lines: list[str], line_idx_h4: int | None) -> bool:
         if line_idx_h4 is None or not (0 <= line_idx_h4 < len(file_lines)):
             return False
 
@@ -160,19 +198,31 @@ class MarkdownProcessor:
         metadata = self._read_h4_metadata_block(start_idx, file_lines)
         changed = False
 
-        anki_line_idx = metadata.get("anki_meta_line_idx")
-        if anki_line_idx is not None and 0 <= anki_line_idx < len(file_lines):
-            file_lines.pop(anki_line_idx)
+        meta_line_indices = [
+            idx
+            for idx in [
+                metadata.get("anki_meta_line_idx"),
+                metadata.get("srs_meta_line_idx"),
+                metadata.get("nosrs_line_idx"),
+            ]
+            if idx is not None and 0 <= idx < len(file_lines)
+        ]
+        if meta_line_indices:
+            first_meta_idx = min(meta_line_indices)
+            last_meta_idx = max(meta_line_indices)
+            # Remove the contiguous H4 metadata area, including blank lines around
+            # recognized metadata, then reinsert a single canonical ^nosrs line.
+            while first_meta_idx > start_idx and file_lines[first_meta_idx - 1].strip() == "":
+                first_meta_idx -= 1
+            while last_meta_idx + 1 < len(file_lines) and file_lines[last_meta_idx + 1].strip() == "":
+                last_meta_idx += 1
+            del file_lines[first_meta_idx : last_meta_idx + 1]
             changed = True
-            noanki_line_idx = metadata.get("noanki_line_idx")
-            if noanki_line_idx is not None and noanki_line_idx > anki_line_idx:
-                metadata["noanki_line_idx"] = noanki_line_idx - 1
 
-        if metadata.get("noanki_line_idx") is None:
-            newline, _ = self._split_newline(file_lines[line_idx_h4])
-            newline = newline or "\n"
-            file_lines[start_idx:start_idx] = [newline, self.append_noanki_to_line(file_lines[line_idx_h4])]
-            changed = True
+        newline, _ = self._split_newline(file_lines[line_idx_h4])
+        newline = newline or "\n"
+        file_lines[start_idx:start_idx] = [newline, self.append_nosrs_to_line(file_lines[line_idx_h4])]
+        changed = True
 
         return changed
 
@@ -242,12 +292,15 @@ class MarkdownProcessor:
                 h4_metadata = self._read_h4_metadata_block(h4_end_line_idx, lines_all)
                 anki_id = h4_metadata["anki_note_id"]
                 anki_line_idx = h4_metadata["anki_meta_line_idx"]
+                srs_id = h4_metadata["srs_note_id"]
+                srs_line_idx = h4_metadata["srs_meta_line_idx"]
                 delete_requested = h4_metadata["delete_requested"]
                 no_anki = h4_metadata["no_anki"]
+                no_srs = h4_metadata["no_srs"]
 
-                if no_anki and not delete_requested:
+                if (no_anki or no_srs) and not delete_requested:
                     if anki_id:
-                        warnings.append(f"noanki with anki id on h4 '{heading_pure}' in {source_rel}; skip this note")
+                        warnings.append(f"skip marker with anki id on h4 '{heading_pure}' in {source_rel}; skip this note")
                     if (
                         next((k for k in range(i + 1, len(tokens)) if tokens[k].type == "heading_open" and tokens[k].tag in ["h1", "h2", "h3", "h4"]), None)
                         is not None
@@ -307,8 +360,11 @@ class MarkdownProcessor:
                     h4_heading_pure=heading_pure,
                     anki_note_id=anki_id,
                     anki_meta_line_idx=anki_line_idx,
+                    srs_note_id=srs_id,
+                    srs_meta_line_idx=srs_line_idx,
                     delete_requested=delete_requested,
                     no_anki=no_anki,
+                    no_srs=no_srs,
                     front_md=front_part,
                     back_md=back_part,
                     split_by_separator=sep_idx != -1,

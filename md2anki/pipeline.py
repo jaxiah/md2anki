@@ -2,10 +2,12 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
+import time
 
 from .anki_client import AnkiClient
 from .html_renderer import HtmlRenderer
 from .markdown_processor import MarkdownProcessor
+from .srs_collection import SrsCollection, StaticHtmlBackend
 
 
 @dataclass
@@ -17,6 +19,8 @@ class PipelineReport:
     deleted: int = 0
     skipped: int = 0
     failed: int = 0
+    mode: str = "anki"
+    files: list[str] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
     markdown_writebacks: list[str] = field(default_factory=list)
     dry_run_actions: list[dict[str, Any]] = field(default_factory=list)
@@ -36,30 +40,56 @@ def run_pipeline(
     retry_backoff_seconds: float = 0.75,
     fail_fast: bool = True,
     show_progress: bool = False,
+    output_mode: str = "anki",
+    collection_root: Path | None = None,
+    srs_state_file: Path | None = None,
+    apply_srs_changes: bool = True,
     processor: MarkdownProcessor | None = None,
     renderer: HtmlRenderer | None = None,
     anki_client: AnkiClient | None = None,
+    srs_collection: SrsCollection | None = None,
 ) -> PipelineReport:
     """最小过程式编排：parse -> (route) -> render -> sync -> writeback。"""
+
+    if output_mode not in {"anki", "html"}:
+        raise ValueError("output_mode must be 'anki' or 'html'")
+    if output_mode == "html" and collection_root is None:
+        raise ValueError("collection_root is required when output_mode='html'")
 
     vault_root = Path(vault_root).absolute()
     state_file = sync_state_file or (vault_root / "sync_state.json")
 
     processor = processor or MarkdownProcessor(vault_root=vault_root)
-    renderer = renderer or HtmlRenderer(vault_name=vault_name, vault_root=vault_root, asset_root=asset_root)
-    anki_client = anki_client or AnkiClient(
-        anki_connect_url=anki_connect_url,
-        sync_state_file=state_file,
-        apply_changes=apply_anki_changes,
-        request_timeout_seconds=request_timeout_seconds,
-        max_retries=max_retries,
-        retry_backoff_seconds=retry_backoff_seconds,
-        fail_fast=fail_fast,
-    )
+    if output_mode == "html":
+        renderer = renderer or HtmlRenderer(
+            vault_name=vault_name,
+            vault_root=vault_root,
+            asset_root=asset_root,
+            footer_anchor_attr="srs_note_id",
+            footer_anchor_prefix="srs",
+        )
+        srs_collection = srs_collection or SrsCollection(
+            collection_root=Path(collection_root),
+            state_file=srs_state_file,
+            html_backend=StaticHtmlBackend(vault_root=vault_root, asset_root=asset_root),
+            apply_changes=apply_srs_changes,
+            fail_fast=fail_fast,
+        )
+    else:
+        renderer = renderer or HtmlRenderer(vault_name=vault_name, vault_root=vault_root, asset_root=asset_root)
+        anki_client = anki_client or AnkiClient(
+            anki_connect_url=anki_connect_url,
+            sync_state_file=state_file,
+            apply_changes=apply_anki_changes,
+            request_timeout_seconds=request_timeout_seconds,
+            max_retries=max_retries,
+            retry_backoff_seconds=retry_backoff_seconds,
+            fail_fast=fail_fast,
+        )
 
     parsed_docs = []
     rendered_payloads: list[Any] = []
-    report = PipelineReport()
+    report = PipelineReport(mode=output_mode)
     writeback_files_seen: set[str] = set()
 
     def _emit_progress(stage: str, current: int, total: int, name: str | None = None, status: str | None = None) -> None:
@@ -80,6 +110,81 @@ def run_pipeline(
 
     total_files = len(markdown_files)
 
+    if output_mode == "html":
+        next_srs_id = int(time.time() * 1000)
+        generated_srs_ids: set[str] = set()
+        srs_writebacks: dict[str, list[dict[str, Any]]] = {}
+
+        def _new_srs_id() -> str:
+            nonlocal next_srs_id
+            while str(next_srs_id) in generated_srs_ids:
+                next_srs_id += 1
+            generated = str(next_srs_id)
+            generated_srs_ids.add(generated)
+            next_srs_id += 1
+            return generated
+
+        for file_index, markdown_file in enumerate(markdown_files, start=1):
+            abs_file = Path(markdown_file)
+            if not abs_file.is_absolute():
+                abs_file = vault_root / abs_file
+            doc = processor.parse_file(abs_file)
+            parsed_docs.append(doc)
+            _emit_progress("parse", file_index, total_files, doc.source_file, "parsed")
+            report.errors.extend(doc.warnings)
+
+            for note in doc.notes:
+                if getattr(note, "no_anki", False) and not getattr(note, "delete_requested", False):
+                    report.skipped += 1
+                    continue
+                if getattr(note, "no_srs", False) and not getattr(note, "delete_requested", False):
+                    report.skipped += 1
+                    continue
+                if not getattr(note, "srs_note_id", None) and not getattr(note, "delete_requested", False):
+                    new_id = _new_srs_id()
+                    setattr(note, "srs_note_id", new_id)
+                    srs_writebacks.setdefault(note.source_file, []).append(
+                        {
+                            "source_file": note.source_file,
+                            "line_idx_h4": note.line_idx_h4,
+                            "srs_note_id": new_id,
+                        }
+                    )
+                rendered = renderer.render(note)
+                if rendered.warnings:
+                    report.errors.extend(rendered.warnings)
+                rendered_payloads.append(rendered)
+
+        if write_back_markdown and apply_srs_changes:
+            for source_file, bindings in srs_writebacks.items():
+                abs_path = vault_root / source_file
+                if not abs_path.exists():
+                    report.errors.append(f"writeback file missing: {source_file}")
+                    continue
+                file_lines = abs_path.read_text(encoding="utf-8").splitlines(keepends=True)
+                file_changed = False
+                for binding in sorted(bindings, key=lambda item: item.get("line_idx_h4", -1), reverse=True):
+                    if processor.append_srs_id_at_line(
+                        file_lines,
+                        binding.get("line_idx_h4"),
+                        binding.get("srs_note_id"),
+                    ):
+                        file_changed = True
+                if file_changed:
+                    abs_path.write_text("".join(file_lines), encoding="utf-8")
+                    _record_writeback(source_file)
+
+        srs_result = srs_collection.sync(rendered_payloads, progress_callback=_emit_progress)
+        report.added += srs_result.added
+        report.updated += srs_result.updated
+        report.deleted += srs_result.deleted
+        report.skipped += srs_result.skipped
+        report.failed += srs_result.failed
+        report.files.extend(srs_result.files)
+        report.errors.extend(srs_result.errors)
+        report.dry_run_actions.extend(srs_result.dry_run_actions)
+        return report
+
     for file_index, markdown_file in enumerate(markdown_files, start=1):
         # 支持相对路径输入，统一转为 vault_root 下绝对路径处理。
         abs_file = Path(markdown_file)
@@ -93,11 +198,11 @@ def run_pipeline(
 
         for note in doc.notes:
             if note.no_anki and not note.delete_requested:
-                # noanki 直接跳过后续阶段。
+                # nosrs 直接跳过后续阶段。
                 report.skipped += 1
                 report.dry_run_actions.append(
                     {
-                        "action": "skip_noanki",
+                        "action": "skip_nosrs",
                         "source_file": note.source_file,
                         "line_idx_h4": note.line_idx_h4,
                     }
@@ -205,8 +310,8 @@ def run_pipeline(
                         file_changed = True
                         finalized_bindings_for_file.append(payload)
                 elif kind == "delete":
-                    # delete 成功后，删除 ^anki 行并补 ^noanki。
-                    if processor.remove_anki_metadata_and_mark_noanki(file_lines, payload.get("line_idx_h4")):
+                    # delete 成功后，删除 ^anki 行并补 ^nosrs。
+                    if processor.remove_anki_metadata_and_mark_nosrs(file_lines, payload.get("line_idx_h4")):
                         file_changed = True
 
             if file_changed:

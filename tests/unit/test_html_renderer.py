@@ -12,6 +12,7 @@ class FakeParsedNote:
     back_md: str
     parent_title: str | None = None
     anki_note_id: str | None = None
+    srs_note_id: str | None = None
 
 
 DUMP_RENDERED_NOTE_HTML = os.getenv("DUMP_RENDERED_NOTE_HTML", "1") == "1"
@@ -118,6 +119,30 @@ def test_footer_links_to_file_only_when_no_anki_id(tmp_path: Path):
     assert "open in Obsidian" in rendered.back_html_with_footer
     assert rendered.obsidian_url is not None
     assert "#" not in rendered.obsidian_url
+
+
+def test_footer_links_to_srs_anchor_when_renderer_configured_for_srs(tmp_path: Path):
+    vault_root = tmp_path / "vault"
+    (vault_root / "assets").mkdir(parents=True, exist_ok=True)
+    renderer = HtmlRenderer(
+        vault_name="sample-notes",
+        vault_root=vault_root,
+        asset_root="assets",
+        footer_anchor_attr="srs_note_id",
+        footer_anchor_prefix="srs",
+    )
+    note = FakeParsedNote(
+        source_file="folder/a.md",
+        front_md="F",
+        back_md="B",
+        srs_note_id="1783400717267",
+    )
+
+    rendered = _render_case("footer_links_to_srs_anchor", renderer, note)
+
+    assert "file=folder/a%23%5Esrs-1783400717267" in rendered.back_html_with_footer
+    assert rendered.obsidian_url is not None
+    assert "srs-1783400717267" in rendered.obsidian_url
 
 
 def test_wiki_link_conversion_with_alias(tmp_path: Path):

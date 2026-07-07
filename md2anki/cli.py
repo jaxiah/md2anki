@@ -24,8 +24,29 @@ def build_parser() -> argparse.ArgumentParser:
     """
 
     parser = argparse.ArgumentParser(description="Run md2anki pipeline")
+    mode_group = parser.add_mutually_exclusive_group()
+    mode_group.add_argument(
+        "--to-anki",
+        action="store_true",
+        help="Sync notes to AnkiConnect. This is the default mode.",
+    )
+    mode_group.add_argument(
+        "--to-html",
+        action="store_true",
+        help="Sync notes to a filesystem-backed HTML SRS collection.",
+    )
     parser.add_argument("--vault-root", required=True, help="Vault root directory")
     parser.add_argument("--asset-root", default="assets", help="Asset root under vault")
+    parser.add_argument(
+        "--collection-root",
+        default=None,
+        help="HTML SRS collection root. Required with --to-html.",
+    )
+    parser.add_argument(
+        "--srs-state-file",
+        default=None,
+        help="SRS state file path, default <collection_root>/srs_sync_state.json.",
+    )
     parser.add_argument("--anki-connect-url", default="http://127.0.0.1:8765", help="AnkiConnect URL")
     parser.add_argument(
         "--request-timeout-seconds",
@@ -90,6 +111,12 @@ def main(argv: list[str] | None = None) -> int:
     vault_name = vault_root.name
     sync_state_file = Path(args.sync_state_file).absolute() if args.sync_state_file else (vault_root / "sync_state.json")
     markdown_files = _collect_markdown_files(vault_root, args.files)
+    output_mode = "html" if args.to_html else "anki"
+    collection_root = Path(args.collection_root).absolute() if args.collection_root else None
+    srs_state_file = Path(args.srs_state_file).absolute() if args.srs_state_file else None
+
+    if output_mode == "html" and collection_root is None:
+        parser.error("--collection-root is required with --to-html")
 
     report = run_pipeline(
         markdown_files=markdown_files,
@@ -105,14 +132,25 @@ def main(argv: list[str] | None = None) -> int:
         retry_backoff_seconds=args.retry_backoff_seconds,
         fail_fast=not args.no_fail_fast,
         show_progress=args.show_progress,
+        output_mode=output_mode,
+        collection_root=collection_root,
+        srs_state_file=srs_state_file,
     )
 
-    mode = "apply" if args.apply_anki_changes else "dry-run"
-    print(
-        "[md2anki] "
-        f"mode={mode} added={report.added} updated={report.updated} deleted={report.deleted} "
-        f"skipped={report.skipped} failed={report.failed} writebacks={len(report.markdown_writebacks)}"
-    )
+    if output_mode == "html":
+        print(
+            "[md2anki] "
+            f"mode=html added={report.added} updated={report.updated} deleted={report.deleted} "
+            f"skipped={report.skipped} failed={report.failed} files={len(report.files)} "
+            f"writebacks={len(report.markdown_writebacks)}"
+        )
+    else:
+        mode = "apply" if args.apply_anki_changes else "dry-run"
+        print(
+            "[md2anki] "
+            f"mode={mode} added={report.added} updated={report.updated} deleted={report.deleted} "
+            f"skipped={report.skipped} failed={report.failed} writebacks={len(report.markdown_writebacks)}"
+        )
 
     if report.errors:
         print("[md2anki] errors:")
