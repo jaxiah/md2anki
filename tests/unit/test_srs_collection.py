@@ -1,3 +1,4 @@
+import base64
 import json
 from pathlib import Path
 from types import SimpleNamespace
@@ -35,6 +36,15 @@ def _rendered_note(srs_id: str = "1783400717267", deck_full: str = "DeckA::Paren
         back_html_with_footer='<p>Answer</p><a href="obsidian://open?vault=v&file=notes/a%23%5Esrs-1783400717267">open in Obsidian</a>',
         media_files=[],
         obsidian_url="obsidian://open?vault=v&file=notes/a%23%5Esrs-1783400717267",
+    )
+
+
+def _media(filename: str, data: bytes):
+    return SimpleNamespace(
+        filename=filename,
+        abs_path=f"/vault/assets/{filename}",
+        base64_data=base64.b64encode(data).decode("utf-8"),
+        source_ref=filename,
     )
 
 
@@ -114,3 +124,34 @@ def test_static_html_backend_highlights_code_blocks_without_changing_renderer_co
     assert 'class="language-python"' in html
     assert 'class="k">def</span>' in html
     assert 'class="k">return</span>' in html
+
+
+def test_static_html_backend_copies_media_into_collection_assets_with_original_name(tmp_path: Path):
+    collection_root = tmp_path / "collection"
+    backend = StaticHtmlBackend(collection_root=collection_root)
+    rendered = _rendered_note()
+    rendered.front_html = '<p><img src="chart.png"></p>'
+    rendered.media_files = [_media("chart.png", b"pngdata")]
+    output_path = collection_root / "DeckA" / "Parent" / "1783400717267.html"
+
+    html = backend.build_note_html(rendered, output_path)
+
+    assert (collection_root / "assets" / "chart.png").read_bytes() == b"pngdata"
+    assert '<img src="../../assets/chart.png">' in html
+
+
+def test_srs_collection_rebuilds_when_media_asset_is_missing(tmp_path: Path):
+    collection_root = tmp_path / "collection"
+    collection = SrsCollection(collection_root=collection_root)
+    rendered = _rendered_note()
+    rendered.front_html = '<p><img src="shared.png"></p>'
+    rendered.media_files = [_media("shared.png", b"shared")]
+    first = collection.sync([rendered])
+    asset = collection_root / "assets" / "shared.png"
+    asset.unlink()
+
+    second = collection.sync([rendered])
+
+    assert first.added == 1
+    assert second.updated == 1
+    assert asset.read_bytes() == b"shared"

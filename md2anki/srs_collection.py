@@ -1,8 +1,10 @@
+import base64
 import hashlib
 import html
 import json
 import os
 import re
+from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -38,10 +40,14 @@ class HtmlBackend(Protocol):
 class StaticHtmlBackend:
     """Write rendered front/back fields as a standalone two-panel HTML note."""
 
-    def __init__(self, vault_root: Path, asset_root: str = "assets"):
-        self.vault_root = Path(vault_root).absolute()
+    def __init__(self, collection_root: Path | None = None, asset_root: str = "assets", **kwargs):
+        if collection_root is None:
+            collection_root = kwargs.pop("vault_root", None)
+        if collection_root is None:
+            raise TypeError("collection_root is required")
+        self.collection_root = Path(collection_root).absolute()
         self.asset_root = asset_root
-        self.assets_dir = self.vault_root / asset_root
+        self.assets_dir = self.collection_root / asset_root
 
     def write_note_html(self, rendered_note: Any, output_path: Path) -> None:
         output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -50,10 +56,12 @@ class StaticHtmlBackend:
     def build_note_html(self, rendered_note: Any, output_path: Path) -> str:
         parsed = getattr(rendered_note, "parsed", None)
         title = html.escape(getattr(parsed, "h4_heading_pure", "") or "SRS note")
-        front_html = self._prepare_note_html(getattr(rendered_note, "front_html", ""), output_path)
+        asset_urls = deque(self._materialize_media_assets(rendered_note, output_path))
+        front_html = self._prepare_note_html(getattr(rendered_note, "front_html", ""), output_path, asset_urls)
         back_html = self._prepare_note_html(
             getattr(rendered_note, "back_html_with_footer", getattr(rendered_note, "back_html", "")),
             output_path,
+            asset_urls,
         )
         return f"""<!doctype html>
 <html lang="en">
@@ -353,25 +361,59 @@ class StaticHtmlBackend:
 </body>
 </html>"""
 
-    def _rewrite_image_sources(self, html_content: str, output_path: Path) -> str:
+    def expected_asset_paths(self, rendered_note: Any) -> list[Path]:
+        return [self._asset_path_for_media(media) for media in getattr(rendered_note, "media_files", [])]
+
+    def assets_exist_for(self, rendered_note: Any) -> bool:
+        for media in getattr(rendered_note, "media_files", []):
+            asset_path = self._asset_path_for_media(media)
+            if not asset_path.exists():
+                return False
+            if asset_path.read_bytes() != base64.b64decode(getattr(media, "base64_data", "")):
+                return False
+        return True
+
+    def _materialize_media_assets(self, rendered_note: Any, output_path: Path) -> list[str]:
+        asset_urls: list[str] = []
+        media_files = list(getattr(rendered_note, "media_files", []))
+        if media_files:
+            self.assets_dir.mkdir(parents=True, exist_ok=True)
+
+        for media in media_files:
+            asset_path = self._asset_path_for_media(media)
+            data = base64.b64decode(getattr(media, "base64_data", ""))
+            if not asset_path.exists() or asset_path.read_bytes() != data:
+                asset_path.write_bytes(data)
+            rel = os.path.relpath(asset_path, output_path.parent).replace("\\", "/")
+            asset_urls.append(rel)
+
+        return asset_urls
+
+    def _asset_path_for_media(self, media: Any) -> Path:
+        filename = self._sanitize_asset_filename(getattr(media, "filename", "") or "asset")
+        return self.assets_dir / filename
+
+    @staticmethod
+    def _sanitize_asset_filename(filename: str) -> str:
+        cleaned = Path(filename).name
+        cleaned = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", cleaned).strip().rstrip(" .")
+        return cleaned or "asset"
+
+    def _rewrite_image_sources(self, html_content: str, output_path: Path, asset_urls: deque[str]) -> str:
         def replace_src(match: re.Match) -> str:
             quote = match.group(1)
             src = match.group(2)
             if "://" in src or src.startswith(("data:", "/", "#")):
                 return match.group(0)
-            candidate = self.assets_dir / src
-            if not candidate.exists():
-                matches = sorted(self.assets_dir.rglob(Path(src).name), key=lambda p: str(p).replace("\\", "/"))
-                candidate = matches[0] if matches else candidate
-            if candidate.exists():
-                rel = os.path.relpath(candidate, output_path.parent).replace("\\", "/")
-                return f"src={quote}{html.escape(rel, quote=True)}{quote}"
-            return match.group(0)
+            if not asset_urls:
+                return match.group(0)
+            rel = asset_urls.popleft()
+            return f"src={quote}{html.escape(rel, quote=True)}{quote}"
 
         return re.sub(r"\bsrc=(['\"])([^'\"]+)\1", replace_src, html_content)
 
-    def _prepare_note_html(self, html_content: str, output_path: Path) -> str:
-        html_content = self._rewrite_image_sources(html_content, output_path)
+    def _prepare_note_html(self, html_content: str, output_path: Path, asset_urls: deque[str]) -> str:
+        html_content = self._rewrite_image_sources(html_content, output_path, asset_urls)
         return self._highlight_code_blocks(html_content)
 
     def _highlight_code_blocks(self, html_content: str) -> str:
@@ -546,8 +588,17 @@ class SrsCollection:
                 content_hash = self.compute_content_hash(rendered)
                 old_item = items.get(srs_note_id)
                 old_html_path = old_item.get("html_path") if old_item else None
+                assets_exist = True
+                if hasattr(self.html_backend, "assets_exist_for"):
+                    assets_exist = bool(self.html_backend.assets_exist_for(rendered))
 
-                if old_item and old_item.get("content_hash") == content_hash and old_html_path == rel_html_path and output_path.exists():
+                if (
+                    old_item
+                    and old_item.get("content_hash") == content_hash
+                    and old_html_path == rel_html_path
+                    and output_path.exists()
+                    and assets_exist
+                ):
                     result.skipped += 1
                     if progress_callback:
                         progress_callback("html", index, total_notes, getattr(parsed, "h4_heading_pure", None), "skip_unchanged")

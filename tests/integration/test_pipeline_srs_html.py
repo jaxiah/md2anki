@@ -79,3 +79,38 @@ Answer A
     assert md_file.read_text(encoding="utf-8") == original
     assert report.markdown_writebacks == []
     assert [note.parsed.srs_note_id for note in srs_collection.rendered_notes] == ["1783400717267"]
+
+
+def test_pipeline_html_mode_copies_media_into_collection_assets(tmp_path: Path):
+    vault_root = tmp_path / "vault"
+    assets_dir = vault_root / "assets"
+    assets_dir.mkdir(parents=True, exist_ok=True)
+    (assets_dir / "diagram.png").write_bytes(b"pngdata")
+    md_file = vault_root / "cards.md"
+    md_file.write_text(
+        """---
+ankideck: DeckA
+---
+### Parent
+#### Card A
+^srs-1783400717267
+---
+![[diagram.png|280]]
+""",
+        encoding="utf-8",
+    )
+    collection_root = tmp_path / "collection"
+
+    report = run_pipeline(
+        markdown_files=[md_file],
+        vault_root=vault_root,
+        vault_name="sample-notes",
+        output_mode="html",
+        collection_root=collection_root,
+    )
+
+    html_file = collection_root / "DeckA" / "Parent" / "1783400717267.html"
+    assert report.added == 1
+    assert (collection_root / "assets" / "diagram.png").read_bytes() == b"pngdata"
+    assert 'src="../../assets/diagram.png"' in html_file.read_text(encoding="utf-8")
+    assert "vault/assets/diagram.png" not in html_file.read_text(encoding="utf-8")

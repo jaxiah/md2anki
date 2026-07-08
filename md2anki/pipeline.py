@@ -71,7 +71,7 @@ def run_pipeline(
         srs_collection = srs_collection or SrsCollection(
             collection_root=Path(collection_root),
             state_file=srs_state_file,
-            html_backend=StaticHtmlBackend(vault_root=vault_root, asset_root=asset_root),
+            html_backend=StaticHtmlBackend(collection_root=Path(collection_root), asset_root=asset_root),
             apply_changes=apply_srs_changes,
             fail_fast=fail_fast,
         )
