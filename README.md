@@ -61,8 +61,8 @@ convert velocity into pressure.
 Requirements:
 
 - Python `>=3.10`
-- Anki desktop
-- AnkiConnect enabled at `http://127.0.0.1:8765`
+- Anki desktop and AnkiConnect for the Anki workflow
+- A filesystem collection root for the HTML workflow
 
 ```bash
 pip install -e .
@@ -80,7 +80,13 @@ md2anki --vault-root D:/Notes/MyVault
 Apply changes:
 
 ```bash
-md2anki --vault-root D:/Notes/MyVault --apply-anki-changes
+md2anki --to-anki --vault-root D:/Notes/MyVault --apply-anki-changes
+```
+
+Generate a portable HTML SRS collection:
+
+```bash
+md2anki --to-html --vault-root D:/Notes/MyVault --collection-root D:/JSRS
 ```
 
 Process one file:
@@ -91,18 +97,23 @@ md2anki --vault-root D:/Notes/MyVault --file "Biology/cells.md"
 
 Windows launcher: copy `md2anki.cmd` into a vault root and double-click it. The launcher uses its own directory as `vault-root` and runs in apply mode.
 
+HTML launcher: copy `md2html.cmd` into a vault root and double-click it. By default it writes the HTML collection to `D:\JSRS`; set `MD2HTML_COLLECTION_ROOT` to override that path.
+
+HTML collections include an offline MathJax runtime by default. The HTML workflow copies the bundled `tex-mml-chtml.js` into `<collection-root>/assets/mathjax/` and generated notes load that local file. Set `MD2ANKI_MATHJAX_SOURCE` only if you want to override the bundled runtime with a different local `tex-mml-chtml.js`.
+
 ## Markdown Rules
 
 - A file must have frontmatter `ankideck`.
 - Each `####` starts one card.
 - Text before the first body `---` is appended to the front; text after it becomes the back.
 - `^anki-123` binds a Markdown block to an Anki note.
-- `^anki-123 DELETE` deletes the note and writes `^noanki`.
-- `^noanki` skips that card.
+- `^srs-123` binds a Markdown block to an HTML SRS note.
+- `^anki-123 DEL` or `^srs-123 DEL` deletes the synced note and writes `^nosrs`.
+- `^nosrs` skips that card in both workflows.
 
 ## Safety
 
-Dry-run is the default command-line behavior. Apply mode writes to Anki and may write metadata such as `^anki-<id>` or `^noanki` back into Markdown.
+Dry-run is the default Anki command-line behavior. Apply mode writes to Anki and may write metadata such as `^anki-<id>` or `^nosrs` back into Markdown. HTML mode writes collection files and may write `^srs-<id>` or `^nosrs` back into Markdown.
 
 Back up your vault and Anki before large migrations.
 

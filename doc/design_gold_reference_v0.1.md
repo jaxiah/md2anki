@@ -18,11 +18,11 @@ md2anki v0.1 的目标是：将 Obsidian 风格 Markdown 中的 H4 卡片块稳�
   - frontmatter `ankideck`
   - H1/H2/H3 父层级
   - H4 作为卡片单元
-  - 元信息行：`^anki-<id>`, `^anki-<id> DELETE`, `^noanki`, `^id-xxxx`
+  - 元信息行：`^anki-<id>`, `^anki-<id> DELETE`, `^nosrs`, `^id-xxxx`
 - 渲染 front/back markdown 为 HTML（含 wiki link / wiki image / math delimiter 规范化）。
 - 与 AnkiConnect 同步：ADD / UPDATE / DELETE / SKIP。
 - 维护 `sync_state.json`（按 anki note id 跟踪 hash 与来源）。
-- apply 模式下回写 markdown（写入 `^anki-id`、补父节点 `^id-*`、删除后写 `^noanki`）。
+- apply 模式下回写 markdown（写入 `^anki-id`、补父节点 `^id-*`、删除后写 `^nosrs`）。
 - dry-run 模式下仅给出计划，不触发网络写入、不改 state、不改 markdown。
 
 ### 1.3 文件级处理门槛（重要契约）
@@ -75,7 +75,7 @@ md2anki v0.1 的目标是：将 Obsidian 风格 Markdown 中的 H4 卡片块稳�
 - deck：`ankideck_base`, `deck_full`
 - 父节点：`parent_title`, `parent_block_id`, `parent_line_idx`, `parent_level`
 - 卡片头：`h4_heading_raw`, `h4_heading_pure`
-- 元信息：`anki_note_id`, `anki_meta_line_idx`, `delete_requested`, `no_anki`
+- 元信息：`anki_note_id`, `anki_meta_line_idx`, `delete_requested`, `no_srs`
 - 内容：`front_md`, `back_md`, `split_by_separator`
 
 ### 3.2 渲染结果
@@ -122,14 +122,14 @@ md2anki v0.1 的目标是：将 Obsidian 风格 Markdown 中的 H4 卡片块稳�
 
 - `^anki-<数字>`：绑定已存在 Anki note。
 - `^anki-<数字> DELETE`：请求删除该 note。
-- `^noanki`：跳过该 H4，不参与 add/update/delete。
+- `^nosrs`：跳过该 H4，不参与 add/update/delete。
 - `^id-xxxx`：父节点 block id。
 
-### 4.3 noanki 与 delete 的路由关系
+### 4.3 nosrs 与 delete 的路由关系
 
-- `^noanki` 且非 delete：直接 skip。
+- `^nosrs` 且非 delete：直接 skip。
 - `^anki-id DELETE`：走删除分支。
-- 同时存在 `DELETE + ^noanki`：优先 delete（删除成功后最终保持单个 `^noanki`）。
+- 同时存在 `DELETE + ^nosrs`：优先 delete（删除成功后最终保持单个 `^nosrs`）。
 
 ### 4.4 front/back 切分
 
@@ -199,7 +199,7 @@ fenced code 中保持原样，不做替换。
 ### 6.2 ADD / UPDATE / SKIP / DELETE 判定
 
 - DELETE：`delete_requested=True` 且有 `anki_note_id`。
-- SKIP(noanki)：`no_anki=True` 且非 delete。
+- SKIP(nosrs)：`no_srs=True` 且非 delete。
 - SKIP(unchanged)：有 id 且 state 中 hash 相同。
 - UPDATE：有 id 且需要更新。
 - ADD：无 id 且需要新增。
@@ -238,7 +238,7 @@ fenced code 中保持原样，不做替换。
 ### 7.2 回写内容
 
 - ADD 成功后：在 H4 元信息区写入 `^anki-<id>`。
-- DELETE 成功后：移除 `^anki-*`，补 `^noanki`（若不存在）。
+- DELETE 成功后：移除 `^anki-*`，补 `^nosrs`（若不存在）。
 - 父节点缺 `^id-*` 时：在父标题下插入。
 
 ### 7.3 稳定性机制
@@ -256,7 +256,7 @@ fenced code 中保持原样，不做替换。
 1. 解析所有输入 markdown。
 2. apply 模式下先补父节点 block id（必要时写盘并重解析）。
 3. 路由 note：
-   - `noanki`（非 delete）直接 skip
+   - `nosrs`（非 delete）直接 skip
    - delete 走轻量 payload（无需渲染）
    - 其余走 renderer
 4. 调用 `AnkiClient.sync(...)`
@@ -296,7 +296,7 @@ fenced code 中保持原样，不做替换。
 
 ### 10.1 单元测试
 
-- `MarkdownProcessor`：解析规则、层级父节点、metadata 空行容忍、delete/noanki、回写辅助。
+- `MarkdownProcessor`：解析规则、层级父节点、metadata 空行容忍、delete/nosrs、回写辅助。
 - `HtmlRenderer`：footer URL、wiki link/image、冲突图片选择、math normalize、code fence 保护。
 - `AnkiClient`：dry-run 无副作用、add/update/skip/delete、state 变更。
 - `CLI`：默认 dry-run、参数透传与文件收集。
@@ -304,13 +304,13 @@ fenced code 中保持原样，不做替换。
 ### 10.2 集成测试
 
 - Parser + Renderer 联合行为（列表/表格/链接/图片/数学）。
-- Pipeline 在临时 vault 下的 add/update/delete/noanki/冲突/多空行/多父节点写回位置。
+- Pipeline 在临时 vault 下的 add/update/delete/nosrs/冲突/多空行/多父节点写回位置。
 
 ### 10.3 手动真 E2E
 
 - 文件：`tests/e2e/test_manual_e2e_flow.py`
 - 门禁：`MD2ANKI_E2E=1`
-- 覆盖时序（8 条）：初次 add、rerun skip、update、delete、noanki 保持、delete+noanki 冲突、媒体数学 roundtrip、空行鲁棒性。
+- 覆盖时序（8 条）：初次 add、rerun skip、update、delete、nosrs 保持、delete+nosrs 冲突、媒体数学 roundtrip、空行鲁棒性。
 
 ---
 

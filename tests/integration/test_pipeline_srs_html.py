@@ -114,3 +114,51 @@ ankideck: DeckA
     assert (collection_root / "assets" / "diagram.png").read_bytes() == b"pngdata"
     assert 'src="../../assets/diagram.png"' in html_file.read_text(encoding="utf-8")
     assert "vault/assets/diagram.png" not in html_file.read_text(encoding="utf-8")
+
+
+def test_pipeline_html_delete_writes_nosrs_back_to_markdown(tmp_path: Path):
+    vault_root = tmp_path / "vault"
+    vault_root.mkdir(parents=True, exist_ok=True)
+    md_file = vault_root / "cards.md"
+    md_file.write_text(
+        """---
+ankideck: DeckA
+---
+### Parent
+#### Card A
+^srs-1783400717267 DEL
+Answer A
+""",
+        encoding="utf-8",
+    )
+    collection_root = tmp_path / "collection"
+    html_file = collection_root / "DeckA" / "Parent" / "1783400717267.html"
+    html_file.parent.mkdir(parents=True, exist_ok=True)
+    html_file.write_text("<html></html>", encoding="utf-8")
+    (collection_root / "srs_sync_state.json").write_text(
+        """{
+  "schema_version": 1,
+  "items": {
+    "1783400717267": {
+      "content_hash": "old",
+      "html_path": "DeckA/Parent/1783400717267.html"
+    }
+  }
+}""",
+        encoding="utf-8",
+    )
+
+    report = run_pipeline(
+        markdown_files=[md_file],
+        vault_root=vault_root,
+        vault_name="sample-notes",
+        output_mode="html",
+        collection_root=collection_root,
+    )
+
+    updated = md_file.read_text(encoding="utf-8")
+    assert report.deleted == 1
+    assert report.markdown_writebacks == ["cards.md"]
+    assert "^srs-1783400717267" not in updated
+    assert "^nosrs" in updated
+    assert not html_file.exists()

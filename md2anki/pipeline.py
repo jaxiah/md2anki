@@ -134,9 +134,6 @@ def run_pipeline(
             report.errors.extend(doc.warnings)
 
             for note in doc.notes:
-                if getattr(note, "no_anki", False) and not getattr(note, "delete_requested", False):
-                    report.skipped += 1
-                    continue
                 if getattr(note, "no_srs", False) and not getattr(note, "delete_requested", False):
                     report.skipped += 1
                     continue
@@ -183,6 +180,23 @@ def run_pipeline(
         report.files.extend(srs_result.files)
         report.errors.extend(srs_result.errors)
         report.dry_run_actions.extend(srs_result.dry_run_actions)
+        if write_back_markdown and apply_srs_changes and srs_result.deletions_to_writeback:
+            for deletion in sorted(
+                srs_result.deletions_to_writeback,
+                key=lambda item: (item.get("source_file") or "", item.get("line_idx_h4", -1)),
+                reverse=True,
+            ):
+                source_file = deletion.get("source_file")
+                if not source_file:
+                    continue
+                abs_path = vault_root / source_file
+                if not abs_path.exists():
+                    report.errors.append(f"writeback file missing: {source_file}")
+                    continue
+                file_lines = abs_path.read_text(encoding="utf-8").splitlines(keepends=True)
+                if processor.remove_sync_metadata_and_mark_nosrs(file_lines, deletion.get("line_idx_h4")):
+                    abs_path.write_text("".join(file_lines), encoding="utf-8")
+                    _record_writeback(source_file)
         return report
 
     for file_index, markdown_file in enumerate(markdown_files, start=1):
@@ -197,7 +211,7 @@ def run_pipeline(
         report.errors.extend(doc.warnings)
 
         for note in doc.notes:
-            if note.no_anki and not note.delete_requested:
+            if note.no_srs and not note.delete_requested:
                 # nosrs 直接跳过后续阶段。
                 report.skipped += 1
                 report.dry_run_actions.append(
@@ -311,7 +325,7 @@ def run_pipeline(
                         finalized_bindings_for_file.append(payload)
                 elif kind == "delete":
                     # delete 成功后，删除 ^anki 行并补 ^nosrs。
-                    if processor.remove_anki_metadata_and_mark_nosrs(file_lines, payload.get("line_idx_h4")):
+                    if processor.remove_sync_metadata_and_mark_nosrs(file_lines, payload.get("line_idx_h4")):
                         file_changed = True
 
             if file_changed:

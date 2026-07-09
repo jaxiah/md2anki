@@ -31,7 +31,6 @@ class ParsedNote:
     srs_note_id: str | None
     srs_meta_line_idx: int | None
     delete_requested: bool
-    no_anki: bool
     no_srs: bool
     front_md: str
     back_md: str
@@ -79,7 +78,6 @@ class MarkdownProcessor:
             "srs_note_id": None,
             "srs_meta_line_idx": None,
             "delete_requested": False,
-            "no_anki": False,
             "no_srs": False,
             "nosrs_line_idx": None,
             "last_meta_line_idx": None,
@@ -115,7 +113,6 @@ class MarkdownProcessor:
 
             nosrs_match = RE_NOSRS_LINE.match(candidate)
             if nosrs_match:
-                metadata["no_anki"] = True
                 metadata["no_srs"] = True
                 metadata["nosrs_line_idx"] = idx
                 metadata["last_meta_line_idx"] = idx
@@ -165,7 +162,7 @@ class MarkdownProcessor:
             return False
         insert_idx = line_idx + 1
         metadata = self._read_h4_metadata_block(insert_idx, file_lines)
-        if metadata["anki_note_id"] or metadata["no_anki"] or metadata["no_srs"]:
+        if metadata["anki_note_id"] or metadata["no_srs"]:
             return False
         newline, _ = self._split_newline(file_lines[line_idx])
         newline = newline or "\n"
@@ -178,7 +175,7 @@ class MarkdownProcessor:
             return False
         insert_idx = line_idx + 1
         metadata = self._read_h4_metadata_block(insert_idx, file_lines)
-        if metadata["srs_note_id"] or metadata["no_anki"] or metadata["no_srs"]:
+        if metadata["srs_note_id"] or metadata["no_srs"]:
             return False
         newline, _ = self._split_newline(file_lines[line_idx])
         newline = newline or "\n"
@@ -190,7 +187,7 @@ class MarkdownProcessor:
         newline = newline or "\n"
         return f"^nosrs{newline}"
 
-    def remove_anki_metadata_and_mark_nosrs(self, file_lines: list[str], line_idx_h4: int | None) -> bool:
+    def remove_sync_metadata_and_mark_nosrs(self, file_lines: list[str], line_idx_h4: int | None) -> bool:
         if line_idx_h4 is None or not (0 <= line_idx_h4 < len(file_lines)):
             return False
 
@@ -295,10 +292,9 @@ class MarkdownProcessor:
                 srs_id = h4_metadata["srs_note_id"]
                 srs_line_idx = h4_metadata["srs_meta_line_idx"]
                 delete_requested = h4_metadata["delete_requested"]
-                no_anki = h4_metadata["no_anki"]
                 no_srs = h4_metadata["no_srs"]
 
-                if (no_anki or no_srs) and not delete_requested:
+                if no_srs and not delete_requested:
                     if anki_id:
                         warnings.append(f"skip marker with anki id on h4 '{heading_pure}' in {source_rel}; skip this note")
                     if (
@@ -363,7 +359,6 @@ class MarkdownProcessor:
                     srs_note_id=srs_id,
                     srs_meta_line_idx=srs_line_idx,
                     delete_requested=delete_requested,
-                    no_anki=no_anki,
                     no_srs=no_srs,
                     front_md=front_part,
                     back_md=back_part,

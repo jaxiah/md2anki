@@ -17,7 +17,7 @@ echo [md2anki-launcher] mode=apply
 echo [md2anki-launcher] python=%MD2ANKI_PYTHON%
 
 REM 默认 apply；你也可以双击外加参数（例如 --file "A/B.md"）
-%MD2ANKI_PYTHON% -m md2anki --to-anki --vault-root "%VAULT_ROOT%" --show-progress --apply-anki-changes %*
+"%MD2ANKI_PYTHON%" -m md2anki --to-anki --vault-root "%VAULT_ROOT%" --show-progress --apply-anki-changes %*
 set "EXIT_CODE=%ERRORLEVEL%"
 
 echo [md2anki-launcher] exit-code=%EXIT_CODE%

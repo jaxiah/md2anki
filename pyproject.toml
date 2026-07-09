@@ -25,6 +25,9 @@ md2anki = "md2anki.cli:main"
 [tool.setuptools]
 packages = ["md2anki"]
 
+[tool.setuptools.package-data]
+md2anki = ["vendor/mathjax/*.js", "vendor/mathjax/*.md"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]

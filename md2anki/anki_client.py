@@ -332,7 +332,7 @@ class AnkiClient:
             parsed = rendered.parsed
             note_id = getattr(parsed, "anki_note_id", None)
 
-            if getattr(parsed, "no_anki", False) and not getattr(parsed, "delete_requested", False):
+            if getattr(parsed, "no_srs", False) and not getattr(parsed, "delete_requested", False):
                 # nosrs 只跳过，不触发 add/update/delete。
                 result.skipped += 1
                 result.dry_run_actions.append(

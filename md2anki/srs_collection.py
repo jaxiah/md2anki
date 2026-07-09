@@ -1,6 +1,7 @@
 import base64
 import hashlib
 import html
+import importlib.resources as resources
 import json
 import os
 import re
@@ -37,17 +38,145 @@ class HtmlBackend(Protocol):
         ...
 
 
-class StaticHtmlBackend:
-    """Write rendered front/back fields as a standalone two-panel HTML note."""
+class CollectionAssetStore:
+    """Copy rendered media into collection-local assets and expose relative URLs."""
 
-    def __init__(self, collection_root: Path | None = None, asset_root: str = "assets", **kwargs):
-        if collection_root is None:
-            collection_root = kwargs.pop("vault_root", None)
-        if collection_root is None:
-            raise TypeError("collection_root is required")
+    def __init__(self, collection_root: Path, asset_root: str = "assets"):
         self.collection_root = Path(collection_root).absolute()
         self.asset_root = asset_root
         self.assets_dir = self.collection_root / asset_root
+
+    def expected_asset_paths(self, rendered_note: Any) -> list[Path]:
+        return [self.asset_path_for_media(media) for media in getattr(rendered_note, "media_files", [])]
+
+    def assets_match(self, rendered_note: Any) -> bool:
+        for media in getattr(rendered_note, "media_files", []):
+            asset_path = self.asset_path_for_media(media)
+            if not asset_path.exists():
+                return False
+            if asset_path.read_bytes() != base64.b64decode(getattr(media, "base64_data", "")):
+                return False
+        return True
+
+    def materialize_media_assets(self, rendered_note: Any, output_path: Path) -> list[str]:
+        asset_urls: list[str] = []
+        media_files = list(getattr(rendered_note, "media_files", []))
+        if media_files:
+            self.assets_dir.mkdir(parents=True, exist_ok=True)
+
+        for media in media_files:
+            asset_path = self.asset_path_for_media(media)
+            data = base64.b64decode(getattr(media, "base64_data", ""))
+            if not asset_path.exists() or asset_path.read_bytes() != data:
+                asset_path.write_bytes(data)
+            rel = os.path.relpath(asset_path, output_path.parent).replace("\\", "/")
+            asset_urls.append(rel)
+
+        return asset_urls
+
+    def asset_path_for_media(self, media: Any) -> Path:
+        filename = self.sanitize_asset_filename(getattr(media, "filename", "") or "asset")
+        return self.assets_dir / filename
+
+    @staticmethod
+    def sanitize_asset_filename(filename: str) -> str:
+        cleaned = Path(filename).name
+        cleaned = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", cleaned).strip().rstrip(" .")
+        return cleaned or "asset"
+
+
+class MathJaxSupport:
+    """Build MathJax script tags and optionally copy a local fallback runtime."""
+
+    cdn_url = "https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"
+
+    def __init__(self, collection_root: Path, asset_root: str = "assets", source_path: Path | None = None):
+        self.collection_root = Path(collection_root).absolute()
+        self.assets_dir = self.collection_root / asset_root
+        env_source = os.environ.get("MD2ANKI_MATHJAX_SOURCE")
+        self.source_path = Path(source_path or env_source).absolute() if source_path or env_source else None
+        self.local_path = self.assets_dir / "mathjax" / "tex-mml-chtml.js"
+
+    def script_tags(self, output_path: Path) -> str:
+        local_url = self._materialize_local_runtime(output_path)
+        config = """  <script>
+    window.MathJax = {
+      tex: {
+        inlineMath: [['\\\\(', '\\\\)']],
+        displayMath: [['\\\\[', '\\\\]']]
+      }
+    };
+  </script>"""
+        if not local_url:
+            return f'{config}\n  <script defer src="{self.cdn_url}"></script>'
+
+        escaped_local = html.escape(local_url, quote=True)
+        return f'{config}\n  <script defer src="{escaped_local}"></script>'
+
+    def _materialize_local_runtime(self, output_path: Path) -> str | None:
+        source_data = self._read_source_bytes()
+        if source_data is not None:
+            self.local_path.parent.mkdir(parents=True, exist_ok=True)
+            if not self.local_path.exists() or self.local_path.read_bytes() != source_data:
+                self.local_path.write_bytes(source_data)
+        if not self.local_path.exists():
+            return None
+        return os.path.relpath(self.local_path, output_path.parent).replace("\\", "/")
+
+    def _read_source_bytes(self) -> bytes | None:
+        if self.source_path:
+            if self.source_path.exists() and self.source_path.is_file():
+                return self.source_path.read_bytes()
+            return None
+        try:
+            candidate = resources.files("md2anki").joinpath("vendor", "mathjax", "tex-mml-chtml.js")
+            if candidate.is_file():
+                return candidate.read_bytes()
+        except Exception:
+            return None
+        return None
+
+
+class PygmentsCodeHighlighter:
+    """Apply static Pygments highlighting to markdown-it code blocks."""
+
+    def highlight_code_blocks(self, html_content: str) -> str:
+        pattern = re.compile(
+            r'<pre><code(?: class="language-([^"]+)")?>(.*?)</code></pre>',
+            flags=re.DOTALL,
+        )
+
+        def replace_code(match: re.Match) -> str:
+            language = (match.group(1) or "").strip()
+            raw_code = html.unescape(match.group(2))
+            try:
+                lexer = get_lexer_by_name(language) if language else TextLexer()
+            except ClassNotFound:
+                lexer = TextLexer()
+            highlighted = highlight(raw_code, lexer, HtmlFormatter(nowrap=True, noclasses=False))
+            class_attr = f' class="language-{html.escape(language, quote=True)}"' if language else ""
+            return f'<pre class="highlight"><code{class_attr}>{highlighted}</code></pre>'
+
+        return pattern.sub(replace_code, html_content)
+
+
+class StaticHtmlBackend:
+    """Write rendered front/back fields as a standalone two-panel HTML note."""
+
+    def __init__(
+        self,
+        collection_root: Path,
+        asset_root: str = "assets",
+        mathjax_source: Path | None = None,
+        asset_store: CollectionAssetStore | None = None,
+        code_highlighter: PygmentsCodeHighlighter | None = None,
+        mathjax: MathJaxSupport | None = None,
+    ):
+        self.collection_root = Path(collection_root).absolute()
+        self.asset_root = asset_root
+        self.asset_store = asset_store or CollectionAssetStore(self.collection_root, asset_root=asset_root)
+        self.mathjax = mathjax or MathJaxSupport(self.collection_root, asset_root=asset_root, source_path=mathjax_source)
+        self.code_highlighter = code_highlighter or PygmentsCodeHighlighter()
 
     def write_note_html(self, rendered_note: Any, output_path: Path) -> None:
         output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -56,28 +185,21 @@ class StaticHtmlBackend:
     def build_note_html(self, rendered_note: Any, output_path: Path) -> str:
         parsed = getattr(rendered_note, "parsed", None)
         title = html.escape(getattr(parsed, "h4_heading_pure", "") or "SRS note")
-        asset_urls = deque(self._materialize_media_assets(rendered_note, output_path))
+        asset_urls = deque(self.asset_store.materialize_media_assets(rendered_note, output_path))
         front_html = self._prepare_note_html(getattr(rendered_note, "front_html", ""), output_path, asset_urls)
         back_html = self._prepare_note_html(
             getattr(rendered_note, "back_html_with_footer", getattr(rendered_note, "back_html", "")),
             output_path,
             asset_urls,
         )
+        mathjax_scripts = self.mathjax.script_tags(output_path)
         return f"""<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{title}</title>
-  <script>
-    window.MathJax = {{
-      tex: {{
-        inlineMath: [['\\\\(', '\\\\)']],
-        displayMath: [['\\\\[', '\\\\]']]
-      }}
-    }};
-  </script>
-  <script defer src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+{mathjax_scripts}
   <style>
     :root {{
       color-scheme: light dark;
@@ -362,42 +484,10 @@ class StaticHtmlBackend:
 </html>"""
 
     def expected_asset_paths(self, rendered_note: Any) -> list[Path]:
-        return [self._asset_path_for_media(media) for media in getattr(rendered_note, "media_files", [])]
+        return self.asset_store.expected_asset_paths(rendered_note)
 
     def assets_exist_for(self, rendered_note: Any) -> bool:
-        for media in getattr(rendered_note, "media_files", []):
-            asset_path = self._asset_path_for_media(media)
-            if not asset_path.exists():
-                return False
-            if asset_path.read_bytes() != base64.b64decode(getattr(media, "base64_data", "")):
-                return False
-        return True
-
-    def _materialize_media_assets(self, rendered_note: Any, output_path: Path) -> list[str]:
-        asset_urls: list[str] = []
-        media_files = list(getattr(rendered_note, "media_files", []))
-        if media_files:
-            self.assets_dir.mkdir(parents=True, exist_ok=True)
-
-        for media in media_files:
-            asset_path = self._asset_path_for_media(media)
-            data = base64.b64decode(getattr(media, "base64_data", ""))
-            if not asset_path.exists() or asset_path.read_bytes() != data:
-                asset_path.write_bytes(data)
-            rel = os.path.relpath(asset_path, output_path.parent).replace("\\", "/")
-            asset_urls.append(rel)
-
-        return asset_urls
-
-    def _asset_path_for_media(self, media: Any) -> Path:
-        filename = self._sanitize_asset_filename(getattr(media, "filename", "") or "asset")
-        return self.assets_dir / filename
-
-    @staticmethod
-    def _sanitize_asset_filename(filename: str) -> str:
-        cleaned = Path(filename).name
-        cleaned = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", cleaned).strip().rstrip(" .")
-        return cleaned or "asset"
+        return self.asset_store.assets_match(rendered_note)
 
     def _rewrite_image_sources(self, html_content: str, output_path: Path, asset_urls: deque[str]) -> str:
         def replace_src(match: re.Match) -> str:
@@ -414,26 +504,7 @@ class StaticHtmlBackend:
 
     def _prepare_note_html(self, html_content: str, output_path: Path, asset_urls: deque[str]) -> str:
         html_content = self._rewrite_image_sources(html_content, output_path, asset_urls)
-        return self._highlight_code_blocks(html_content)
-
-    def _highlight_code_blocks(self, html_content: str) -> str:
-        pattern = re.compile(
-            r'<pre><code(?: class="language-([^"]+)")?>(.*?)</code></pre>',
-            flags=re.DOTALL,
-        )
-
-        def replace_code(match: re.Match) -> str:
-            language = (match.group(1) or "").strip()
-            raw_code = html.unescape(match.group(2))
-            try:
-                lexer = get_lexer_by_name(language) if language else TextLexer()
-            except ClassNotFound:
-                lexer = TextLexer()
-            highlighted = highlight(raw_code, lexer, HtmlFormatter(nowrap=True, noclasses=False))
-            class_attr = f' class="language-{html.escape(language, quote=True)}"' if language else ""
-            return f'<pre class="highlight"><code{class_attr}>{highlighted}</code></pre>'
-
-        return pattern.sub(replace_code, html_content)
+        return self.code_highlighter.highlight_code_blocks(html_content)
 
 
 class SrsCollection:
@@ -520,19 +591,6 @@ class SrsCollection:
         for index, rendered in enumerate(rendered_notes, start=1):
             parsed = getattr(rendered, "parsed", None)
             srs_note_id = getattr(parsed, "srs_note_id", None)
-
-            if getattr(parsed, "no_anki", False) and not getattr(parsed, "delete_requested", False):
-                result.skipped += 1
-                result.dry_run_actions.append(
-                    {
-                        "action": "skip_nosrs",
-                        "source_file": getattr(parsed, "source_file", None),
-                        "line_idx_h4": getattr(parsed, "line_idx_h4", None),
-                    }
-                )
-                if progress_callback:
-                    progress_callback("html", index, total_notes, getattr(parsed, "h4_heading_pure", None), "skip_nosrs")
-                continue
 
             if getattr(parsed, "no_srs", False) and not getattr(parsed, "delete_requested", False):
                 result.skipped += 1

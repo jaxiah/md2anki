@@ -46,7 +46,7 @@ python -m pytest tests/e2e/test_manual_e2e_flow.py -m e2e_manual -q
 
 - [ ] 8 条手动 E2E 用例通过
 - [ ] 关键链路确认：add → rerun skip → update → delete
-- [ ] delete 后 Markdown 中目标卡片为 `^noanki`，且 state 清理正确
+- [ ] delete 后 Markdown 中目标卡片为 `^nosrs`，且 state 清理正确
 
 ---
 
@@ -77,7 +77,7 @@ md2anki --vault-root <VAULT_ROOT> --file <RELATIVE_FILE> --apply-anki-changes
 
 - [ ] 仅指定文件被处理
 - [ ] Anki 中卡片写入/更新符合预期
-- [ ] markdown 回写位置正确（`^anki-id` 或 `^noanki`）
+- [ ] markdown 回写位置正确（`^anki-id` 或 `^nosrs`）
 
 ### B3. 全量 apply（可选）
 
@@ -115,7 +115,7 @@ md2anki --vault-root <VAULT_ROOT> --apply-anki-changes
 1. 是否遗漏 `--apply-anki-changes`
 2. Anki 是否启动
 3. AnkiConnect 地址是否可达
-4. 目标 H4 是否被 `^noanki` 跳过
+4. 目标 H4 是否被 `^nosrs` 跳过
 5. 是否 hash 未变化导致 skip
 
 ### D2. 图片异常

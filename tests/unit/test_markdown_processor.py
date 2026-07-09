@@ -365,7 +365,7 @@ answer
     note = doc.notes[0]
     assert note.anki_note_id == "123456"
     assert note.delete_requested is True
-    assert note.no_anki is False
+    assert note.no_srs is False
     assert note.anki_meta_line_idx is not None
     assert "^anki-123456" not in note.back_md
 
@@ -418,15 +418,15 @@ answer
     note = doc.notes[0]
     assert note.anki_note_id == "123456"
     assert note.delete_requested is True
-    assert note.no_anki is True
+    assert note.no_srs is True
     assert "^nosrs" not in note.back_md
 
 
-def test_remove_anki_metadata_and_mark_nosrs():
+def test_remove_sync_metadata_and_mark_nosrs():
     lines = ["#### Q\n", "\n", "^anki-123456 DELETE\n", "body\n"]
     processor = _new_processor()
 
-    changed = processor.remove_anki_metadata_and_mark_nosrs(lines, 0)
+    changed = processor.remove_sync_metadata_and_mark_nosrs(lines, 0)
 
     assert changed is True
     assert all("^anki-123456" not in line for line in lines)
@@ -434,11 +434,11 @@ def test_remove_anki_metadata_and_mark_nosrs():
     assert lines[:3] == ["#### Q\n", "\n", "^nosrs\n"]
 
 
-def test_remove_anki_metadata_and_mark_nosrs_inserts_blank_after_h4_without_existing_gap():
+def test_remove_sync_metadata_and_mark_nosrs_inserts_blank_after_h4_without_existing_gap():
     lines = ["#### Q\n", "^anki-123456 DELETE\n", "body\n"]
     processor = _new_processor()
 
-    changed = processor.remove_anki_metadata_and_mark_nosrs(lines, 0)
+    changed = processor.remove_sync_metadata_and_mark_nosrs(lines, 0)
 
     assert changed is True
     assert lines[:3] == ["#### Q\n", "\n", "^nosrs\n"]
@@ -473,10 +473,10 @@ def test_remove_anki_metadata_and_mark_nosrs_inserts_blank_after_h4_without_exis
         ),
     ],
 )
-def test_remove_anki_metadata_and_mark_nosrs_normalizes_metadata_spacing(lines, expected):
+def test_remove_sync_metadata_and_mark_nosrs_normalizes_metadata_spacing(lines, expected):
     processor = _new_processor()
 
-    changed = processor.remove_anki_metadata_and_mark_nosrs(lines, 0)
+    changed = processor.remove_sync_metadata_and_mark_nosrs(lines, 0)
 
     assert changed is True
     assert lines == expected

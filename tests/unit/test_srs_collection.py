@@ -25,7 +25,6 @@ def _rendered_note(srs_id: str = "1783400717267", deck_full: str = "DeckA::Paren
         deck_full=deck_full,
         front_md="Question",
         back_md="Answer",
-        no_anki=False,
         no_srs=False,
         delete_requested=False,
     )
@@ -114,7 +113,7 @@ def test_srs_collection_moves_html_when_deck_changes(tmp_path: Path):
 
 
 def test_static_html_backend_highlights_code_blocks_without_changing_renderer_contract(tmp_path: Path):
-    backend = StaticHtmlBackend(vault_root=tmp_path / "vault")
+    backend = StaticHtmlBackend(collection_root=tmp_path / "collection")
     rendered = _rendered_note()
     rendered.front_html = '<pre><code class="language-python">def add(a, b):\n    return a + b\n</code></pre>'
 
@@ -155,3 +154,32 @@ def test_srs_collection_rebuilds_when_media_asset_is_missing(tmp_path: Path):
     assert first.added == 1
     assert second.updated == 1
     assert asset.read_bytes() == b"shared"
+
+
+def test_static_html_backend_uses_bundled_mathjax_by_default(tmp_path: Path, monkeypatch):
+    monkeypatch.delenv("MD2ANKI_MATHJAX_SOURCE", raising=False)
+    collection_root = tmp_path / "collection"
+    backend = StaticHtmlBackend(collection_root=collection_root)
+    output_path = collection_root / "DeckA" / "Parent" / "1783400717267.html"
+
+    html = backend.build_note_html(_rendered_note(), output_path)
+
+    copied = collection_root / "assets" / "mathjax" / "tex-mml-chtml.js"
+    assert copied.exists()
+    assert copied.stat().st_size > 1_000_000
+    assert "assets/mathjax/tex-mml-chtml.js" in html
+    assert "cdn.jsdelivr.net" not in html
+
+
+def test_static_html_backend_uses_custom_mathjax_source_when_available(tmp_path: Path):
+    collection_root = tmp_path / "collection"
+    mathjax_source = tmp_path / "tex-mml-chtml.js"
+    mathjax_source.write_text("window.MathJax = window.MathJax || {};", encoding="utf-8")
+    backend = StaticHtmlBackend(collection_root=collection_root, mathjax_source=mathjax_source)
+    output_path = collection_root / "DeckA" / "Parent" / "1783400717267.html"
+
+    html = backend.build_note_html(_rendered_note(), output_path)
+
+    assert (collection_root / "assets" / "mathjax" / "tex-mml-chtml.js").exists()
+    assert "assets/mathjax/tex-mml-chtml.js" in html
+    assert "cdn.jsdelivr.net" not in html

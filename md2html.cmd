@@ -27,7 +27,7 @@ echo [md2html-launcher] mode=html
 echo [md2html-launcher] python=%MD2ANKI_PYTHON%
 
 REM 你也可以双击外加参数（例如 --file "A/B.md"）
-%MD2ANKI_PYTHON% -m md2anki --to-html --vault-root "%VAULT_ROOT%" --collection-root "%COLLECTION_ROOT%" --show-progress %*
+"%MD2ANKI_PYTHON%" -m md2anki --to-html --vault-root "%VAULT_ROOT%" --collection-root "%COLLECTION_ROOT%" --show-progress %*
 set "EXIT_CODE=%ERRORLEVEL%"
 
 echo [md2html-launcher] exit-code=%EXIT_CODE%
