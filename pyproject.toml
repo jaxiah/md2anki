@@ -11,7 +11,6 @@ requires-python = ">=3.10"
 dependencies = [
   "markdown-it-py>=3.0.0",
   "mdit-py-plugins>=0.4.0",
-  "Pygments>=2.18",
   "PyYAML>=6.0",
   "requests>=2.31.0",
 ]
@@ -24,9 +23,6 @@ md2anki = "md2anki.cli:main"
 
 [tool.setuptools]
 packages = ["md2anki"]
-
-[tool.setuptools.package-data]
-md2anki = ["vendor/mathjax/*.js", "vendor/mathjax/*.md"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

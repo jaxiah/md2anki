@@ -32,7 +32,6 @@ def test_cli_defaults_to_dry_run_and_collects_files(tmp_path: Path, monkeypatch)
     assert captured["retry_backoff_seconds"] == 0.75
     assert captured["fail_fast"] is True
     assert captured["show_progress"] is False
-    assert captured["output_mode"] == "anki"
 
 
 def test_cli_apply_mode_with_explicit_file(tmp_path: Path, monkeypatch):
@@ -78,10 +77,18 @@ def test_cli_apply_mode_with_explicit_file(tmp_path: Path, monkeypatch):
     assert captured["retry_backoff_seconds"] == 1.5
     assert captured["fail_fast"] is False
     assert captured["show_progress"] is True
-    assert captured["output_mode"] == "anki"
 
 
-def test_cli_html_mode_requires_collection_root(tmp_path: Path):
+def test_cli_accepts_legacy_to_anki_alias(tmp_path: Path, monkeypatch):
+    vault = tmp_path / "vault"
+    vault.mkdir(parents=True, exist_ok=True)
+
+    monkeypatch.setattr(cli, "run_pipeline", lambda **kwargs: PipelineReport())
+
+    assert cli.main(["--vault-root", str(vault), "--to-anki"]) == 0
+
+
+def test_cli_rejects_removed_html_mode(tmp_path: Path):
     vault = tmp_path / "vault"
     vault.mkdir(parents=True, exist_ok=True)
 
@@ -89,36 +96,3 @@ def test_cli_html_mode_requires_collection_root(tmp_path: Path):
         cli.main(["--vault-root", str(vault), "--to-html"])
 
     assert exc_info.value.code == 2
-
-
-def test_cli_html_mode_passes_collection_options(tmp_path: Path, monkeypatch):
-    vault = tmp_path / "vault"
-    collection = tmp_path / "collection"
-    state_file = tmp_path / "srs_state.json"
-    vault.mkdir(parents=True, exist_ok=True)
-    (vault / "a.md").write_text("# A\n", encoding="utf-8")
-
-    captured = {}
-
-    def _fake_run_pipeline(**kwargs):
-        captured.update(kwargs)
-        return PipelineReport(mode="html", added=1, files=["Deck/a.html"])
-
-    monkeypatch.setattr(cli, "run_pipeline", _fake_run_pipeline)
-
-    code = cli.main(
-        [
-            "--vault-root",
-            str(vault),
-            "--to-html",
-            "--collection-root",
-            str(collection),
-            "--srs-state-file",
-            str(state_file),
-        ]
-    )
-
-    assert code == 0
-    assert captured["output_mode"] == "html"
-    assert captured["collection_root"] == collection.absolute()
-    assert captured["srs_state_file"] == state_file.absolute()

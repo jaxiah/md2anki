@@ -14,7 +14,7 @@ class FakeParsed:
     h4_heading_pure: str = "Question"
     anki_note_id: str | None = None
     delete_requested: bool = False
-    no_srs: bool = False
+    no_anki: bool = False
 
 
 @dataclass
@@ -55,7 +55,7 @@ def test_sync_dry_run_has_no_side_effects(tmp_path: Path):
     notes = [
         FakeRendered(parsed=FakeParsed(anki_note_id=None)),
         FakeRendered(parsed=FakeParsed(anki_note_id="123", delete_requested=True)),
-        FakeRendered(parsed=FakeParsed(no_srs=True)),
+        FakeRendered(parsed=FakeParsed(no_anki=True)),
     ]
 
     result = client.sync(notes)
@@ -65,7 +65,7 @@ def test_sync_dry_run_has_no_side_effects(tmp_path: Path):
     assert result.deleted == 0
     assert result.failed == 0
     assert result.skipped == 1
-    assert {item["action"] for item in result.dry_run_actions} == {"would_add", "would_delete", "skip_nosrs"}
+    assert {item["action"] for item in result.dry_run_actions} == {"would_add", "would_delete", "skip_noanki"}
     assert not (tmp_path / "sync_state.json").exists()
 
 

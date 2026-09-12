@@ -332,22 +332,22 @@ class AnkiClient:
             parsed = rendered.parsed
             note_id = getattr(parsed, "anki_note_id", None)
 
-            if getattr(parsed, "no_srs", False) and not getattr(parsed, "delete_requested", False):
-                # nosrs 只跳过，不触发 add/update/delete。
+            if getattr(parsed, "no_anki", False) and not getattr(parsed, "delete_requested", False):
+                # noanki 只跳过，不触发 add/update/delete。
                 result.skipped += 1
                 result.dry_run_actions.append(
                     {
-                        "action": "skip_nosrs",
+                        "action": "skip_noanki",
                         "source_file": getattr(parsed, "source_file", None),
                         "line_idx_h4": getattr(parsed, "line_idx_h4", None),
                     }
                 )
                 if progress_callback:
-                    progress_callback("sync", index, total_notes, getattr(parsed, "h4_heading_pure", None), "skip_nosrs")
+                    progress_callback("sync", index, total_notes, getattr(parsed, "h4_heading_pure", None), "skip_noanki")
                 continue
 
             if getattr(parsed, "delete_requested", False):
-                # DEL/DELETE 分支：有 id 才允许删除，成功后给回写层处理 ^anki -> ^nosrs。
+                # DEL/DELETE 分支：有 id 才允许删除，成功后给回写层处理 ^anki -> ^noanki。
                 if not note_id:
                     result.failed += 1
                     result.errors.append(f"delete requested but missing anki_note_id for {getattr(parsed, 'source_file', '<unknown>')}")

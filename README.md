@@ -6,7 +6,7 @@ Turn Obsidian-style Markdown into Anki cards, without leaving your vault.
 
 <table>
 <tr>
-<th width="50%">Obsidian source</th>
+<th width="50%">Obsidian source after first sync</th>
 <th width="50%">Anki HTML</th>
 </tr>
 <tr>
@@ -17,6 +17,8 @@ ankideck: Engineering::Pumps
 ---
 
 #### What does a pump volute do?
+
+^anki-1783400717267
 
 ![[pump.png|900]]
 
@@ -47,75 +49,117 @@ convert velocity into pressure.
 </tr>
 </table>
 
-## Why Use It
+The `^anki-1783400717267` line above is an illustrative note ID. Do not invent this value for a new card: omit the line, run an apply sync, and `md2anki` will write back the ID returned by AnkiConnect.
+
+## Key Features
 
 - **Vault-native cards:** write normal Markdown; `####` headings become Anki notes.
-- **Safe sync loop:** dry-run by default; apply mode writes only when requested.
-- **One-click source return:** every Anki card includes an `open in Obsidian` footer that jumps back to the exact Markdown block.
 - **Stable anchors:** new cards get `^anki-<id>` written back to Markdown, so future syncs and source links stay attached to the right card.
-- **Rich rendering:** supports Markdown, tables, code blocks, math, wiki links, and `![[image.png|width]]` embeds.
 - **Incremental sync:** repeat runs skip unchanged cards and update only the notes that changed.
+- **Deck hierarchy:** `ankideck` and the nearest parent heading map directly to nested Anki decks.
+- **One-click source return:** every Anki card includes an `open in Obsidian` footer that jumps back to the exact Markdown block.
+- **Rich rendering:** supports Markdown, tables, code blocks, math, wiki links, and `![[image.png|width]]` embeds.
 
 ## Install
 
 Requirements:
 
 - Python `>=3.10`
-- Anki desktop and AnkiConnect for the Anki workflow
-- A filesystem collection root for the HTML workflow
+- Anki desktop
+- AnkiConnect add-on installed and available at `http://127.0.0.1:8765`
+- Anki's built-in `Basic` note type with `Front` and `Back` fields
+
+Clone or download this repository, then install it from the repository directory:
 
 ```bash
-pip install -e .
-pip install -e .[test]
+python -m pip install .
 ```
 
-## Run
+For development, use an editable install with the test dependencies:
 
-Preview first. This does not write to Anki, state, or Markdown:
+```bash
+python -m pip install -e ".[test]"
+```
+
+The `md2anki` command can then be run from any directory.
+
+## Quick Start
+
+1. Start Anki and make sure AnkiConnect is enabled.
+2. Add `ankideck` frontmatter to a Markdown file in your Obsidian vault.
+3. Write each card under a `####` heading. Leave out `^anki-*` for a new card.
+4. Run apply mode to create the Anki notes and write their IDs back to Markdown.
+
+Run the synchronization:
+
+```bash
+md2anki --vault-root D:/Notes/MyVault --show-progress --apply-anki-changes
+```
+
+To preview the planned add, update, and delete operations without writing anything, omit `--apply-anki-changes`:
 
 ```bash
 md2anki --vault-root D:/Notes/MyVault
 ```
 
-Apply changes:
+Process only one file, relative to the vault root:
 
 ```bash
-md2anki --to-anki --vault-root D:/Notes/MyVault --apply-anki-changes
+md2anki --vault-root D:/Notes/MyVault --file "Biology/cells.md" --apply-anki-changes
 ```
 
-Generate a portable HTML SRS collection:
+By default, synchronization state is stored in `<vault-root>/sync_state.json`, and images are resolved under `<vault-root>/assets`. Override these locations with `--sync-state-file` and `--asset-root` when needed.
 
-```bash
-md2anki --to-html --vault-root D:/Notes/MyVault --collection-root D:/JSRS
-```
-
-Process one file:
-
-```bash
-md2anki --vault-root D:/Notes/MyVault --file "Biology/cells.md"
-```
-
-Windows launcher: copy `md2anki.cmd` into a vault root and double-click it. The launcher uses its own directory as `vault-root` and runs in apply mode.
-
-HTML launcher: copy `md2html.cmd` into a vault root and double-click it. By default it writes the HTML collection to `D:\JSRS`; set `MD2HTML_COLLECTION_ROOT` to override that path.
-
-HTML collections include an offline MathJax runtime by default. The HTML workflow copies the bundled `tex-mml-chtml.js` into `<collection-root>/assets/mathjax/` and generated notes load that local file. Set `MD2ANKI_MATHJAX_SOURCE` only if you want to override the bundled runtime with a different local `tex-mml-chtml.js`.
-
-## Markdown Rules
+## Card Format
 
 - A file must have frontmatter `ankideck`.
-- Each `####` starts one card.
-- Text before the first body `---` is appended to the front; text after it becomes the back.
-- `^anki-123` binds a Markdown block to an Anki note.
-- `^srs-123` binds a Markdown block to an HTML SRS note.
-- `^anki-123 DEL` or `^srs-123 DEL` deletes the synced note and writes `^nosrs`.
-- `^nosrs` skips that card in both workflows.
+- Each `####` heading starts one Anki note. A file may contain multiple notes.
+- The H4 heading is always part of the front.
+- Content before the first `---` in the H4 block is appended to the front.
+- Content after the first `---` becomes the back. Without a separator, the entire body becomes the back.
+- The nearest preceding H3, H2, or H1 heading is appended to `ankideck` as a child deck.
+- `^anki-<id>` is standalone metadata immediately below the H4 heading; blank lines around it are allowed.
+- `^noanki` in the same metadata position skips the H4 block completely.
+- `![[image.png]]` and `![[image.png|900]]` load images from the configured asset root and upload them to Anki media.
+
+For example, an `ankideck` of `Engineering` under `### Pumps` syncs into `Engineering::Pumps`. If no H1/H2/H3 parent exists, the note stays directly in the frontmatter deck.
+
+Only `^anki-*` and `^noanki` are recognized as synchronization metadata.
+
+## Sync Lifecycle
+
+| Markdown state | Apply result |
+| --- | --- |
+| H4 without metadata | Adds a `Basic` note and writes `^anki-<id>` below the H4 |
+| H4 with `^anki-<id>` and changed content | Updates the existing Anki note |
+| H4 with `^anki-<id>` and unchanged content | Skips the note |
+| H4 with `^anki-<id> DEL` or `^anki-<id> DELETE` | Deletes the Anki note and replaces the ID metadata with `^noanki` |
+| H4 with `^noanki` | Skips the block without adding, updating, or deleting anything |
+
+The generated back includes an `open in Obsidian` link targeting the Markdown file and its `^anki-<id>` block anchor. Renaming a note heading does not break its synchronization identity.
+
+## Rendering
+
+`md2anki` renders standard Markdown, tables, fenced code blocks, inline and display math, Obsidian wiki links, and wiki images. Math delimiters are normalized for Anki's built-in MathJax support, and media files are uploaded through AnkiConnect.
+
+For the matching light/dark card presentation, copy [anki-card-style.css](anki-card-style.css) into the Styling section of the Anki `Basic` note type used by these cards.
+
+## Windows Launcher
+
+After installing the package, copy `md2anki.cmd` into the root of an Obsidian vault and double-click it. The launcher uses its own directory as `--vault-root`, shows progress, and runs in apply mode.
+
+It invokes the installed package as `python -m md2anki`. To use a specific virtual environment or a Python path containing spaces, set `MD2ANKI_PYTHON` before launching:
+
+```bat
+set "MD2ANKI_PYTHON=C:\path\to\.venv\Scripts\python.exe"
+md2anki.cmd
+```
 
 ## Safety
 
-Dry-run is the default Anki command-line behavior. Apply mode writes to Anki and may write metadata such as `^anki-<id>` or `^nosrs` back into Markdown. HTML mode writes collection files and may write `^srs-<id>` or `^nosrs` back into Markdown.
+Dry-run is the default command-line behavior. Only `--apply-anki-changes` writes to Anki, `sync_state.json`, or Markdown. Apply mode may insert `^anki-<id>` or replace deleted-note metadata with `^noanki`.
 
-Back up your vault and Anki before large migrations.
+Use only IDs written back by `md2anki`; a hand-written `^anki-<id>` is interpreted as an existing Anki note. Keep `sync_state.json` with the vault, and back up both the vault and Anki before large migrations.
 
 ## Development
 
@@ -128,5 +172,5 @@ E2E tests use a local mock AnkiConnect server and do not touch a real Anki datab
 
 ## References
 
-- Design notes: [doc/design_gold_reference_v0.1.md](doc/design_gold_reference_v0.1.md)
-- Release checklist: [doc/release_checklist_v0.1.md](doc/release_checklist_v0.1.md)
+- Design notes: [doc/design.md](doc/design.md)
+- Release checklist: [doc/release_checklist.md](doc/release_checklist.md)

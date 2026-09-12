@@ -1,7 +1,7 @@
 ---
-ankideck: Decknosrs
+ankideck: Decknoanki
 ---
-### Parent nosrs
+### Parent noanki
 #### Should Be Skipped
-^nosrs
+^noanki
 This content should be skipped by parser.
