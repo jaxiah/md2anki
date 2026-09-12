@@ -12,6 +12,7 @@ class FakeParsedNote:
     back_md: str
     parent_title: str | None = None
     anki_note_id: str | None = None
+    model_name: str = "Basic"
 
 
 DUMP_RENDERED_NOTE_HTML = os.getenv("DUMP_RENDERED_NOTE_HTML", "1") == "1"
@@ -118,6 +119,41 @@ def test_footer_links_to_file_only_when_no_anki_id(tmp_path: Path):
     assert "open in Obsidian" in rendered.back_html_with_footer
     assert rendered.obsidian_url is not None
     assert "#" not in rendered.obsidian_url
+
+
+def test_cloze_rendering_preserves_markers_and_maps_anki_fields(tmp_path: Path):
+    renderer = _new_renderer(tmp_path)
+    note = FakeParsedNote(
+        source_file="folder/cloze.md",
+        front_md="Pump summary\n\nConvert {{c1::**velocity**::energy form}} into {{c2::pressure}}.",
+        back_md="Additional context.",
+        anki_note_id="123",
+        model_name="Cloze",
+    )
+
+    rendered = _render_case("cloze_fields", renderer, note)
+
+    assert rendered.model_name == "Cloze"
+    assert "{{c1::<strong>velocity</strong>::energy form}}" in rendered.anki_fields["Text"]
+    assert "{{c2::pressure}}" in rendered.anki_fields["Text"]
+    assert "Additional context." in rendered.anki_fields["Extra"]
+    assert "open in Obsidian" in rendered.anki_fields["Extra"]
+    assert set(rendered.anki_fields) == {"Text", "Extra"}
+
+
+def test_cloze_without_authored_extra_still_gets_source_footer(tmp_path: Path):
+    renderer = _new_renderer(tmp_path)
+    note = FakeParsedNote(
+        source_file="cloze.md",
+        front_md="Title\n\nValue is {{c1::42}}.",
+        back_md="",
+        model_name="Cloze",
+    )
+
+    rendered = _render_case("cloze_without_extra", renderer, note)
+
+    assert rendered.back_html == ""
+    assert "open in Obsidian" in rendered.anki_fields["Extra"]
 
 
 def test_wiki_link_conversion_with_alias(tmp_path: Path):

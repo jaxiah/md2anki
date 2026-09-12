@@ -10,7 +10,7 @@
 
 ### 1.1 Goal
 
-md2anki synchronizes H4-based card blocks from Obsidian-style Markdown into Anki `Basic` notes. Markdown remains the source of truth, while small metadata markers provide stable identity, deletion, skipping, and source navigation.
+md2anki synchronizes H4-based card blocks from Obsidian-style Markdown into Anki's built-in `Basic` and `Cloze` notes. Markdown remains the source of truth, while small metadata markers provide stable identity, deletion, skipping, and source navigation.
 
 ### 1.2 In Scope
 
@@ -19,7 +19,8 @@ md2anki synchronizes H4-based card blocks from Obsidian-style Markdown into Anki
   - H1/H2/H3 parent hierarchy
   - H4 card blocks
   - standalone metadata lines: `^anki-<id>`, `^anki-<id> DEL|DELETE`, and `^noanki`
-- Render front and back Markdown into HTML.
+- Infer Basic or Cloze independently for each H4 block and map its Markdown into the corresponding Anki fields.
+- Render question and answer-side Markdown into HTML.
 - Normalize Obsidian wiki links, wiki images, and math delimiters.
 - Synchronize notes through AnkiConnect with ADD, UPDATE, DELETE, and SKIP behavior.
 - Maintain `sync_state.json` for content, deck, source URL, and media tracking.
@@ -34,7 +35,8 @@ md2anki synchronizes H4-based card blocks from Obsidian-style Markdown into Anki
 
 ### 1.4 Out of Scope
 
-- Managing Anki note types or card templates. The sync target is the existing `Basic` note type with `Front` and `Back` fields.
+- Managing Anki note types or card templates. Sync targets the existing built-in `Basic` (`Front`, `Back`) and `Cloze` (`Text`, `Extra`) note types.
+- Migrating an existing synchronized note between Basic and Cloze. An intentional type change requires a new note identity.
 - Merging competing edits from multiple Markdown sources that target the same Anki note.
 - Supporting historical inline metadata placed on heading lines.
 - A graphical interface.
@@ -82,7 +84,9 @@ Important fields:
 - Parent: `parent_title`, `parent_level`
 - Heading: `h4_heading_raw`, `h4_heading_pure`
 - Metadata: `anki_note_id`, `anki_meta_line_idx`, `delete_requested`, `no_anki`
-- Content: `front_md`, `back_md`, `split_by_separator`
+- Content: `model_name`, `front_md`, `back_md`, `split_by_separator`
+
+`front_md` and `back_md` are internal semantic slots. They map to `Front` and `Back` for Basic, or `Text` and `Extra` for Cloze.
 
 ### 3.2 Rendered Records
 
@@ -91,6 +95,8 @@ Important fields:
 - `front_html`
 - `back_html`
 - `back_html_with_footer`
+- `model_name`
+- `anki_fields`, derived as `Front`/`Back` or `Text`/`Extra`
 - `media_files`
 - `warnings`
 - `obsidian_url`
@@ -156,13 +162,17 @@ Only `^anki-*` and `^noanki` are synchronization metadata. `^srs-*` and `^nosrs`
 - `^anki-<id> DEL|DELETE` enters the delete path.
 - If delete metadata and `^noanki` coexist, deletion takes precedence. A successful delete leaves one canonical `^noanki` marker.
 
-### 4.4 Front and Back Split
+### 4.4 Note Type Inference and Field Mapping
 
-- The H4 heading is always included in the front.
-- The first thematic break line (`---`, with surrounding whitespace allowed) inside the H4 block is the separator.
-- Content above the separator is appended to the front.
-- Content below the separator becomes the back.
-- Without a separator, the H4 heading is the front and the entire body is the back.
+- Inference is performed independently for each H4 block, so one file may mix Basic and Cloze notes.
+- The inference candidate is the H4 heading plus content above the first thematic break line (`---`, with surrounding whitespace allowed), or the entire body when no separator exists.
+- A candidate containing `{{cN::...}}`, where `N` is a positive integer, is Cloze. The optional `{{cN::text::hint}}` form is also recognized.
+- Cloze syntax below the separator belongs to Extra and does not affect inference.
+- For Basic with a separator, the H4 and content above it map to `Front`; content below it maps to `Back`.
+- For Basic without a separator, the H4 maps to `Front`; the entire body maps to `Back`.
+- For Cloze with a separator, the H4 and content above it map to `Text`; content below it maps to `Extra`.
+- For Cloze without a separator, the H4 and entire body map to `Text`; authored `Extra` is empty.
+- The inferred type of an existing synchronized note must remain stable. A field mismatch is reported as an AnkiConnect failure rather than triggering implicit type migration.
 
 ---
 
@@ -171,8 +181,8 @@ Only `^anki-*` and `^noanki` are synchronization metadata. `^srs-*` and `^nosrs`
 ### 5.1 Markdown Rendering
 
 - `markdown-it-py` uses the `gfm-like` preset with raw HTML and line breaks enabled and automatic linkification disabled.
-- Front and back are rendered separately.
-- The back receives an `open in Obsidian` source footer.
+- The two internal content slots are rendered separately.
+- The answer-side field (`Back` or `Extra`) receives an `open in Obsidian` source footer, including when authored Cloze Extra is empty.
 
 ### 5.2 Wiki Links
 
@@ -226,6 +236,7 @@ Fenced code is protected from math normalization. Anki's built-in MathJax render
 - ADD: no note ID exists.
 
 An existing `^anki-<id>` that is absent from state is still treated as an existing Anki note and updated rather than added.
+For Cloze notes, one Anki note may generate multiple cards. Synchronization and Markdown metadata continue to track only the Anki note ID.
 
 ### 6.3 Content Hash
 
@@ -243,8 +254,8 @@ This keeps Markdown as the source of truth and prevents renderer-only changes fr
 - Load existing deck names with `deckNamesAndIds` in apply mode.
 - Create missing decks with `createDeck`.
 - Upload changed media with `storeMediaFile` before note synchronization.
-- ADD with `addNote`, using `Basic`, `Front`, `Back`, and the `md2anki` tag.
-- UPDATE fields with `updateNoteFields`.
+- ADD with `addNote`, using the inferred model and its fields: `Basic` with `Front`/`Back`, or `Cloze` with `Text`/`Extra`.
+- UPDATE with `updateNoteFields`, using the same model-specific field mapping.
 - Move cards between decks with `notesInfo` and `changeDeck` when `deck_full` changes.
 - DELETE with `deleteNotes`.
 
@@ -323,21 +334,21 @@ Markdown writeback requires both:
 
 ### 10.1 Unit Tests
 
-- `MarkdownProcessor`: parsing, parent hierarchy, metadata spacing, DEL/DELETE, noanki, and writeback helpers.
-- `HtmlRenderer`: source URLs, wiki links and images, ambiguous media, math normalization, and fenced-code protection.
-- `AnkiClient`: dry-run behavior, retries, media caching, add/update/skip/delete, deck moves, URL drift, and state changes.
+- `MarkdownProcessor`: parsing, parent hierarchy, Basic/Cloze inference, field splitting, metadata spacing, DEL/DELETE, noanki, and writeback helpers.
+- `HtmlRenderer`: model-specific fields, source URLs, wiki links and images, ambiguous media, math normalization, and fenced-code protection.
+- `AnkiClient`: model-specific add/update payloads, dry-run behavior, retries, media caching, add/update/skip/delete, deck moves, URL drift, and state changes.
 - CLI: defaults, option forwarding, the legacy hidden `--to-anki` alias, and rejection of the removed HTML mode.
 
 ### 10.2 Integration Tests
 
-- Parser and renderer behavior across lists, tables, links, images, and math.
+- Parser and renderer behavior across Basic/Cloze mixtures, optional Cloze Extra, lists, tables, links, images, and math.
 - Pipeline behavior in temporary vaults, including writeback positions, multiple cards, multiple parent groups, noanki, deletion conflicts, and media failures.
 
 ### 10.3 Mock AnkiConnect E2E
 
 - File: `tests/e2e/test_mock_ankiconnect_flow.py`
 - Uses a local mock HTTP server and never touches a real Anki database.
-- Covers initial add, unchanged rerun, update, delete, noanki persistence, delete/noanki precedence, media and math round trips, and blank-line robustness.
+- Covers mixed Basic/Cloze addition, multiple cards per Cloze note, optional Extra, card-preserving updates, sibling-card deck moves, deletion, invalid type transitions, unchanged reruns, noanki persistence, media and math round trips, and blank-line robustness.
 
 ---
 
@@ -353,7 +364,8 @@ Markdown writeback requires both:
 
 ## 12. Known Boundaries
 
-- The Anki note type name is fixed to `Basic`, with `Front` and `Back` fields.
+- Anki model names and fields are fixed to the built-in `Basic` (`Front`, `Back`) and `Cloze` (`Text`, `Extra`) contracts.
+- Existing notes cannot transition between Basic and Cloze through synchronization.
 - AnkiConnect requests use API version 6.
 - Synchronization metadata must use standalone lines and numeric note IDs.
 - Image resolution is limited to the configured asset root.

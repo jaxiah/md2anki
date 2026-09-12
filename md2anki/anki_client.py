@@ -165,15 +165,12 @@ class AnkiClient:
             return True, None
         return False, str(result)
 
-    def update_note_fields(self, note_id: str, front_html: str, back_html: str) -> tuple[bool, str | None]:
+    def update_note_fields(self, note_id: str, fields: dict[str, str]) -> tuple[bool, str | None]:
         success, result = self.invoke(
             "updateNoteFields",
             note={
                 "id": int(note_id),
-                "fields": {
-                    "Front": front_html,
-                    "Back": back_html,
-                },
+                "fields": fields,
             },
         )
         if success:
@@ -184,8 +181,7 @@ class AnkiClient:
         """Persist the final block-level Obsidian footer after Markdown writeback."""
         success, err = self.update_note_fields(
             note_id=note_id,
-            front_html=getattr(rendered_note, "front_html", ""),
-            back_html=getattr(rendered_note, "back_html_with_footer", ""),
+            fields=rendered_note.anki_fields,
         )
         if not success:
             return False, err
@@ -450,8 +446,7 @@ class AnkiClient:
                 if url_changed:
                     update_ok, update_err = self.update_note_fields(
                         note_id=note_id,
-                        front_html=rendered.front_html,
-                        back_html=rendered.back_html_with_footer,
+                        fields=rendered.anki_fields,
                     )
                     if not update_ok:
                         result.failed += 1
@@ -542,8 +537,7 @@ class AnkiClient:
             if note_id:
                 update_ok, update_err = self.update_note_fields(
                     note_id=note_id,
-                    front_html=rendered.front_html,
-                    back_html=rendered.back_html_with_footer,
+                    fields=rendered.anki_fields,
                 )
                 if not update_ok:
                     result.failed += 1
@@ -582,11 +576,8 @@ class AnkiClient:
                 "addNote",
                 note={
                     "deckName": getattr(parsed, "deck_full", None),
-                    "modelName": "Basic",
-                    "fields": {
-                        "Front": rendered.front_html,
-                        "Back": rendered.back_html_with_footer,
-                    },
+                    "modelName": rendered.model_name,
+                    "fields": rendered.anki_fields,
                     "options": {"allowDuplicate": False},
                     "tags": ["md2anki"],
                 },

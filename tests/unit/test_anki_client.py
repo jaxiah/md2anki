@@ -15,6 +15,9 @@ class FakeParsed:
     anki_note_id: str | None = None
     delete_requested: bool = False
     no_anki: bool = False
+    model_name: str = "Basic"
+    front_md: str = "F"
+    back_md: str = "B"
 
 
 @dataclass
@@ -32,6 +35,16 @@ class FakeRendered:
     back_html_with_footer: str = "<p>B</p>"
     media_files: list[FakeMedia] = field(default_factory=list)
     obsidian_url: str | None = None
+
+    @property
+    def model_name(self) -> str:
+        return self.parsed.model_name
+
+    @property
+    def anki_fields(self) -> dict[str, str]:
+        if self.model_name == "Cloze":
+            return {"Text": self.front_html, "Extra": self.back_html_with_footer}
+        return {"Front": self.front_html, "Back": self.back_html_with_footer}
 
 
 def _new_client(tmp_path: Path, apply_changes: bool = False) -> AnkiClient:
@@ -73,12 +86,14 @@ def test_sync_add_creates_note_and_state(tmp_path: Path):
     client = _new_client(tmp_path, apply_changes=False)
     client.apply_changes = True
     calls: list[str] = []
+    add_payload = {}
 
     def _invoke(action, **params):
         calls.append(action)
         if action in {"createDeck", "storeMediaFile"}:
             return True, None
         if action == "addNote":
+            add_payload.update(params["note"])
             return True, 321
         raise AssertionError(f"unexpected action: {action}")
 
@@ -93,6 +108,115 @@ def test_sync_add_creates_note_and_state(tmp_path: Path):
     assert "321" in client.state["items"]
     assert (tmp_path / "sync_state.json").exists()
     assert calls == ["createDeck", "storeMediaFile", "addNote"]
+    assert add_payload["modelName"] == "Basic"
+    assert add_payload["fields"] == {"Front": "<p>F</p>", "Back": "<p>B</p>"}
+
+
+def test_sync_add_uses_builtin_cloze_model_and_fields(tmp_path: Path):
+    client = _new_client(tmp_path, apply_changes=True)
+    add_payload = {}
+
+    def _invoke(action, **params):
+        if action == "createDeck":
+            return True, None
+        if action == "addNote":
+            add_payload.update(params["note"])
+            return True, 654
+        raise AssertionError(f"unexpected action: {action}")
+
+    client.invoke = _invoke
+    note = FakeRendered(
+        parsed=FakeParsed(model_name="Cloze", front_md="Q {{c1::A}}", back_md="Extra"),
+        front_html="<p>Q {{c1::A}}</p>",
+        back_html_with_footer="<p>Extra</p><div>source</div>",
+    )
+
+    result = client.sync([note])
+
+    assert result.added == 1
+    assert add_payload["modelName"] == "Cloze"
+    assert add_payload["fields"] == {
+        "Text": "<p>Q {{c1::A}}</p>",
+        "Extra": "<p>Extra</p><div>source</div>",
+    }
+
+
+def test_sync_update_uses_model_specific_fields(tmp_path: Path):
+    client = _new_client(tmp_path, apply_changes=True)
+    update_payload = {}
+    note = FakeRendered(
+        parsed=FakeParsed(
+            anki_note_id="655",
+            model_name="Cloze",
+            front_md="Q {{c1::updated}}",
+            back_md="Extra",
+        ),
+        front_html="<p>Q {{c1::updated}}</p>",
+        back_html_with_footer="<p>Extra</p><div>source</div>",
+    )
+    client.state["items"]["655"] = {
+        "content_hash": "stale",
+        "deck_full": "Deck::Parent",
+        "obsidian_url": None,
+    }
+
+    def _invoke(action, **params):
+        if action in {"createDeck", "updateNoteFields"}:
+            if action == "updateNoteFields":
+                update_payload.update(params["note"])
+            return True, None
+        raise AssertionError(f"unexpected action: {action}")
+
+    client.invoke = _invoke
+
+    result = client.sync([note])
+
+    assert result.updated == 1
+    assert update_payload == {
+        "id": 655,
+        "fields": {
+            "Text": "<p>Q {{c1::updated}}</p>",
+            "Extra": "<p>Extra</p><div>source</div>",
+        },
+    }
+
+
+def test_finalize_added_cloze_note_uses_text_and_extra_fields(tmp_path: Path):
+    client = _new_client(tmp_path, apply_changes=True)
+    update_payload = {}
+    note = FakeRendered(
+        parsed=FakeParsed(anki_note_id="656", model_name="Cloze", front_md="Q {{c1::A}}", back_md=""),
+        front_html="<p>Q {{c1::A}}</p>",
+        back_html_with_footer='<div><a href="obsidian://open">open in Obsidian</a></div>',
+    )
+
+    def _invoke(action, **params):
+        assert action == "updateNoteFields"
+        update_payload.update(params["note"])
+        return True, None
+
+    client.invoke = _invoke
+
+    success, error = client.finalize_added_note_url("656", note)
+
+    assert success is True
+    assert error is None
+    assert update_payload == {
+        "id": 656,
+        "fields": {
+            "Text": "<p>Q {{c1::A}}</p>",
+            "Extra": '<div><a href="obsidian://open">open in Obsidian</a></div>',
+        },
+    }
+
+
+def test_content_hash_uses_markdown_semantics_not_rendered_html(tmp_path: Path):
+    client = _new_client(tmp_path)
+    parsed = FakeParsed(model_name="Cloze", front_md="Q {{c1::A}}", back_md="Extra")
+    first = FakeRendered(parsed=parsed, front_html="<p>first view</p>", back_html_with_footer="first footer")
+    second = FakeRendered(parsed=parsed, front_html="<p>restyled view</p>", back_html_with_footer="new footer")
+
+    assert client.compute_content_hash(first) == client.compute_content_hash(second)
 
 
 def test_sync_skips_when_hash_unchanged(tmp_path: Path):

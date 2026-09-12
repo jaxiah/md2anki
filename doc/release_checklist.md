@@ -10,7 +10,7 @@
 
 - [ ] `README.md` matches current installation, commands, metadata, and sync behavior.
 - [ ] `doc/design.md` matches the implementation.
-- [ ] The release preserves or explicitly changes the documented core contracts: `Basic` fields, standalone metadata, and asset-root boundaries.
+- [ ] The release preserves or explicitly changes the documented core contracts: Basic/Cloze inference and fields, standalone metadata, and asset-root boundaries.
 - [ ] Removed or renamed features are absent from CLI help, package exports, examples, and tests.
 
 ### A2. Environment
@@ -20,6 +20,7 @@
 - [ ] Anki Desktop is installed for the real-vault smoke test.
 - [ ] AnkiConnect is enabled at the configured URL, normally `http://127.0.0.1:8765`.
 - [ ] The Anki profile contains a `Basic` note type with `Front` and `Back` fields.
+- [ ] The Anki profile contains a `Cloze` note type with `Text` and `Extra` fields.
 
 ### A3. Full Automated Suite
 
@@ -46,6 +47,9 @@ Required result:
 
 - [ ] All mock E2E scenarios pass.
 - [ ] Add, unchanged rerun, update, and delete all behave as expected.
+- [ ] Mixed Basic/Cloze notes, multiple cards per Cloze note, and Cloze without authored Extra behave as expected.
+- [ ] Updating or moving a Cloze note preserves and moves all derived cards.
+- [ ] An invalid Basic/Cloze type transition fails without replacing the existing note.
 - [ ] A successful delete leaves `^noanki` and removes the deleted note from state.
 - [ ] Media and source-footer behavior remain covered.
 - [ ] The test does not connect to or modify a real Anki database.
@@ -58,7 +62,7 @@ Required result:
 
 - [ ] The version in `pyproject.toml` matches the intended release.
 - [ ] Release notes describe user-visible behavior, compatibility changes, and migration requirements.
-- [ ] Known boundaries are documented, including the fixed `Basic` note type and standalone metadata format.
+- [ ] Known boundaries are documented, including the fixed built-in Basic/Cloze contracts, unsupported type transitions, and standalone metadata format.
 
 ### B2. Small Real-Vault Smoke Test
 
@@ -75,7 +79,10 @@ md2anki --vault-root <VAULT_ROOT> --file <RELATIVE_FILE> --apply-anki-changes
 ```
 
 - [ ] Only the selected Markdown file is processed.
-- [ ] A new note is created with correct Front, Back, deck, and `md2anki` tag.
+- [ ] A new Basic note is created with correct Front, Back, deck, and `md2anki` tag.
+- [ ] A new Cloze note is created with correct Text, Extra, deck, and `md2anki` tag.
+- [ ] Distinct `cN` values create the expected number of Cloze cards.
+- [ ] A Cloze block without `---` keeps its full body in Text and still receives the source footer in Extra.
 - [ ] `^anki-<id>` is written below the correct H4.
 - [ ] The `open in Obsidian` footer opens the exact H4 block.
 - [ ] Images, code blocks, and math render correctly.
@@ -114,7 +121,7 @@ md2anki --vault-root <VAULT_ROOT> --apply-anki-changes
 
 ### C2. Quick Regression Check
 
-- [ ] Inspect one or two decks for Front/Back rendering, source links, images, code blocks, and math.
+- [ ] Inspect Basic and Cloze notes for field rendering, source links, images, code blocks, math, and theme-aware cloze styling.
 - [ ] Confirm that DELETE does not cause automatic re-addition.
 - [ ] Confirm that installation from a fresh checkout exposes both `md2anki` and `python -m md2anki`.
 

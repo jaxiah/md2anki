@@ -47,6 +47,10 @@ def _dump_renderer_result(case_name: str, rendered_notes: list) -> None:
     note_sections: list[str] = []
     for idx, rendered in enumerate(rendered_notes, start=1):
         warning_html = "<br/>".join(rendered.warnings) if rendered.warnings else "(none)"
+        field_sections = "".join(
+            f"<h3>{field_name}</h3>\n{field_html}"
+            for field_name, field_html in rendered.anki_fields.items()
+        )
         media_items = "".join(
             f"<li>{item.filename} | {item.source_ref} | {item.abs_path} | base64_len={len(item.base64_data)}</li>" for item in rendered.media_files
         )
@@ -57,12 +61,8 @@ def _dump_renderer_result(case_name: str, rendered_notes: list) -> None:
             f"""
     <section>
       <h2>Note {idx}: {rendered.parsed.source_file}</h2>
-      <h3>Front HTML</h3>
-      {rendered.front_html}
-      <h3>Back HTML</h3>
-      {rendered.back_html}
-      <h3>Back HTML With Footer</h3>
-      {rendered.back_html_with_footer}
+      <p><strong>Model:</strong> {rendered.model_name}</p>
+      {field_sections}
       <h3>Warnings</h3>
       <pre>{warning_html}</pre>
       <h3>Media Files</h3>
@@ -256,3 +256,29 @@ def test_h4_without_parent_in_subdir_uses_subfile_stem_footer():
     assert "file=sub/09_h4_without_parent_sub" in rendered.back_html_with_footer
 
     _dump_case_result("h4_without_parent_in_subdir_uses_subfile_stem_footer", doc, [rendered])
+
+
+def test_mixed_basic_and_cloze_notes_map_to_model_specific_fields():
+    processor, renderer = _build_pipeline()
+    doc = processor.parse_file(FIXTURE_VAULT / "10_mixed_basic_cloze.md")
+
+    assert [note.model_name for note in doc.notes] == ["Basic", "Cloze", "Cloze"]
+
+    basic, cloze_with_extra, cloze_without_extra = doc.notes
+    assert basic.front_md == "What is the Basic answer?"
+    assert basic.back_md == "The Basic answer is unchanged."
+    assert "What does the cloze syntax identify?" in cloze_with_extra.front_md
+    assert "{{c1::cloze deletion}}" in cloze_with_extra.front_md
+    assert cloze_with_extra.back_md == "This content belongs in Extra."
+    assert "{{c1::Extra}}" in cloze_without_extra.front_md
+    assert cloze_without_extra.back_md == ""
+
+    rendered_notes = [renderer.render(note) for note in doc.notes]
+    assert set(rendered_notes[0].anki_fields) == {"Front", "Back"}
+    assert set(rendered_notes[1].anki_fields) == {"Text", "Extra"}
+    assert "{{c1::cloze deletion}}" in rendered_notes[1].anki_fields["Text"]
+    assert "This content belongs in Extra." in rendered_notes[1].anki_fields["Extra"]
+    assert set(rendered_notes[2].anki_fields) == {"Text", "Extra"}
+    assert "open in Obsidian" in rendered_notes[2].anki_fields["Extra"]
+
+    _dump_case_result("mixed_basic_and_cloze_notes_map_to_model_specific_fields", doc, rendered_notes)

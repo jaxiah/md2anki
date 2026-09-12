@@ -78,12 +78,92 @@ back only
     assert note1.front_md == "Question A\n\nfront extra"
     assert note1.back_md == "back line 1\nback line 2"
     assert note1.split_by_separator is True
+    assert note1.model_name == "Basic"
 
     note2 = doc.notes[1]
     assert note2.deck_full == "ABC::Parent Topic"
     assert note2.anki_note_id is None
     assert note2.front_md == "Question B"
     assert note2.back_md == "back only"
+    assert note2.model_name == "Basic"
+
+
+def test_parse_infers_cloze_without_separator_and_puts_body_in_text():
+    content = """---
+ankideck: Science
+---
+#### Pump energy conversion
+
+The volute converts {{c1::velocity}} into {{c2::pressure}}.
+"""
+
+    note = _parse_case("cloze_without_separator", content).notes[0]
+
+    assert note.model_name == "Cloze"
+    assert note.front_md == (
+        "Pump energy conversion\n\n"
+        "The volute converts {{c1::velocity}} into {{c2::pressure}}."
+    )
+    assert note.back_md == ""
+
+
+def test_parse_infers_cloze_with_separator_and_maps_extra():
+    content = """---
+ankideck: Science
+---
+#### Pump energy conversion
+
+The volute converts {{c1::velocity::energy form}} into pressure.
+
+---
+
+The casing area gradually increases.
+"""
+
+    note = _parse_case("cloze_with_separator", content).notes[0]
+
+    assert note.model_name == "Cloze"
+    assert "{{c1::velocity::energy form}}" in note.front_md
+    assert note.back_md == "The casing area gradually increases."
+
+
+def test_cloze_marker_in_extra_does_not_change_basic_note_type():
+    content = """---
+ankideck: Syntax
+---
+#### How is cloze syntax written?
+
+Anki uses a numbered marker.
+
+---
+
+Example: {{c1::answer}}
+"""
+
+    note = _parse_case("cloze_marker_in_extra", content).notes[0]
+
+    assert note.model_name == "Basic"
+    assert note.front_md == "How is cloze syntax written?\n\nAnki uses a numbered marker."
+    assert note.back_md == "Example: {{c1::answer}}"
+
+
+def test_parse_mixes_basic_and_cloze_notes_in_one_file():
+    content = """---
+ankideck: Mixed
+---
+#### Basic question
+Basic answer.
+
+#### Cloze statement
+The answer is {{c1::forty-two}}.
+"""
+
+    notes = _parse_case("mixed_basic_and_cloze", content).notes
+
+    assert [note.model_name for note in notes] == ["Basic", "Cloze"]
+    assert notes[0].back_md == "Basic answer."
+    assert notes[1].front_md == "Cloze statement\n\nThe answer is {{c1::forty-two}}."
+    assert notes[1].back_md == ""
 
 
 def test_setext_like_separator_does_not_break_next_heading_detection():

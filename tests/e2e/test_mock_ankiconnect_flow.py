@@ -102,6 +102,31 @@ Body line two.
 """,
         encoding="utf-8",
     )
+    (vault_root / "04_mixed_types.md").write_text(
+        """---
+ankideck: md2ankiTest::Mixed
+---
+
+### Parent Mixed
+
+#### Card MixedBasic
+
+Basic answer.
+
+#### Card MixedCloze
+
+The volute converts {{c1::velocity}} into {{c2::pressure}}.
+
+---
+
+Additional cloze context.
+
+#### Card MixedClozeNoExtra
+
+The impeller adds {{c1::velocity}} to the fluid.
+""",
+        encoding="utf-8",
+    )
 
 
 def _run_apply(vault_root: Path, server: MockAnkiConnectServer):
@@ -175,18 +200,19 @@ def _assert_initial_add(vault_root: Path, server: MockAnkiConnectServer) -> None
     report = _run_apply(vault_root, server)
 
     assert report.failed == 0
-    assert report.added == 6
+    assert report.added == 9
     assert report.updated == 0
-    assert server.state.action_count("addNote") == 6
-    assert server.state.action_count("updateNoteFields") == 6
+    assert server.state.action_count("addNote") == 9
+    assert server.state.action_count("updateNoteFields") == 9
 
     flow_after = _read(vault_root / "01_flow.md")
     assert flow_after.count("^anki-") == 4
     assert "^anki-" in _read(vault_root / "02_media_math.md")
     assert "^anki-" in _read(vault_root / "03_blank_lines.md")
+    assert _read(vault_root / "04_mixed_types.md").count("^anki-") == 3
 
     state = _load_state(vault_root)
-    assert len(state["items"]) == 6
+    assert len(state["items"]) == 9
     assert all(item.get("obsidian_url") for item in state["items"].values())
     assert all("%23%5Eanki-" in item["obsidian_url"] for item in state["items"].values())
 
@@ -213,7 +239,7 @@ def test_rerun_skips_after_initial_add(tmp_path: Path):
         assert report.added == 0
         assert report.updated == 0
         assert report.deleted == 0
-        assert report.skipped == 6
+        assert report.skipped == 9
         assert server.state.action_count("updateNoteFields") == update_count_after_add
 
 
@@ -359,3 +385,139 @@ def test_blank_lines_robustness(tmp_path: Path):
         assert report.failed == 0
         assert report.updated == 1
         assert re.search(r"\^anki-\d+", _extract_section(_read(blank_file), "Card BlankLines"))
+
+
+def test_mixed_basic_and_cloze_create_correct_notes_and_cards(tmp_path: Path):
+    vault_root = tmp_path / "mock_vault"
+    _write_vault(vault_root)
+
+    with MockAnkiConnectServer() as server:
+        _assert_initial_add(vault_root, server)
+        mixed_file = _read(vault_root / "04_mixed_types.md")
+        basic_id = int(_note_id_from_section(mixed_file, "Card MixedBasic"))
+        cloze_id = int(_note_id_from_section(mixed_file, "Card MixedCloze"))
+        no_extra_id = int(_note_id_from_section(mixed_file, "Card MixedClozeNoExtra"))
+        basic_note = server.state.notes[basic_id]
+        cloze_note = server.state.notes[cloze_id]
+        no_extra_note = server.state.notes[no_extra_id]
+
+        assert basic_note["modelName"] == "Basic"
+        assert set(basic_note["fields"]) == {"Front", "Back"}
+        assert len(basic_note["cards"]) == 1
+
+        assert cloze_note["modelName"] == "Cloze"
+        assert set(cloze_note["fields"]) == {"Text", "Extra"}
+        assert "Card MixedCloze" in cloze_note["fields"]["Text"]
+        assert "{{c1::velocity}}" in cloze_note["fields"]["Text"]
+        assert "Additional cloze context." in cloze_note["fields"]["Extra"]
+        assert "open in Obsidian" in cloze_note["fields"]["Extra"]
+        assert f"%23%5Eanki-{cloze_id}" in cloze_note["fields"]["Extra"]
+        assert len(cloze_note["cards"]) == 2
+
+        assert no_extra_note["modelName"] == "Cloze"
+        assert "Card MixedClozeNoExtra" in no_extra_note["fields"]["Text"]
+        assert "open in Obsidian" in no_extra_note["fields"]["Extra"]
+        assert len(no_extra_note["cards"]) == 1
+
+
+def test_cloze_update_preserves_existing_cards_and_adds_new_ordinal(tmp_path: Path):
+    vault_root = tmp_path / "mock_vault"
+    _write_vault(vault_root)
+
+    with MockAnkiConnectServer() as server:
+        _assert_initial_add(vault_root, server)
+        mixed_path = vault_root / "04_mixed_types.md"
+        cloze_id = int(_note_id_from_section(_read(mixed_path), "Card MixedCloze"))
+        original_cards = set(server.state.notes[cloze_id]["cards"])
+
+        _replace_in_section(
+            mixed_path,
+            "Card MixedCloze",
+            lambda section: section.replace(
+                "into {{c2::pressure}}.",
+                "into {{c2::pressure}} with {{c3::increasing area}}.",
+            ),
+        )
+        report = _run_apply(vault_root, server)
+
+        updated_cards = set(server.state.notes[cloze_id]["cards"])
+        assert report.failed == 0
+        assert report.updated == 1
+        assert original_cards < updated_cards
+        assert len(updated_cards) == 3
+
+
+def test_delete_cloze_removes_all_derived_cards(tmp_path: Path):
+    vault_root = tmp_path / "mock_vault"
+    _write_vault(vault_root)
+
+    with MockAnkiConnectServer() as server:
+        _assert_initial_add(vault_root, server)
+        mixed_path = vault_root / "04_mixed_types.md"
+        cloze_id = int(_note_id_from_section(_read(mixed_path), "Card MixedCloze"))
+        card_ids = set(server.state.notes[cloze_id]["cards"])
+
+        _replace_in_section(
+            mixed_path,
+            "Card MixedCloze",
+            lambda section: re.sub(
+                rf"\^anki-{cloze_id}\s*$",
+                f"^anki-{cloze_id} DEL",
+                section,
+                flags=re.MULTILINE,
+            ),
+        )
+        report = _run_apply(vault_root, server)
+
+        assert report.failed == 0
+        assert report.deleted == 1
+        assert cloze_id not in server.state.notes
+        assert card_ids.isdisjoint(server.state.cards)
+
+
+def test_cloze_deck_move_moves_every_derived_card(tmp_path: Path):
+    vault_root = tmp_path / "mock_vault"
+    _write_vault(vault_root)
+
+    with MockAnkiConnectServer() as server:
+        _assert_initial_add(vault_root, server)
+        mixed_path = vault_root / "04_mixed_types.md"
+        cloze_id = int(_note_id_from_section(_read(mixed_path), "Card MixedCloze"))
+        card_ids = list(server.state.notes[cloze_id]["cards"])
+
+        mixed_path.write_text(
+            _read(mixed_path).replace(
+                "ankideck: md2ankiTest::Mixed",
+                "ankideck: md2ankiTest::Moved",
+            ),
+            encoding="utf-8",
+        )
+        report = _run_apply(vault_root, server)
+
+        assert report.failed == 0
+        assert report.updated == 3
+        assert all(
+            server.state.cards[card_id]["deckName"] == "md2ankiTest::Moved::Parent Mixed"
+            for card_id in card_ids
+        )
+
+
+def test_unsupported_basic_to_cloze_change_fails_without_replacing_note(tmp_path: Path):
+    vault_root = tmp_path / "mock_vault"
+    _write_vault(vault_root)
+
+    with MockAnkiConnectServer() as server:
+        _assert_initial_add(vault_root, server)
+        mixed_path = vault_root / "04_mixed_types.md"
+        basic_id = int(_note_id_from_section(_read(mixed_path), "Card MixedBasic"))
+
+        _replace_in_section(
+            mixed_path,
+            "Card MixedBasic",
+            lambda section: section.replace("Basic answer.", "Basic {{c1::answer}}."),
+        )
+        report = _run_apply(vault_root, server)
+
+        assert report.failed == 1
+        assert server.state.notes[basic_id]["modelName"] == "Basic"
+        assert any("invalid fields for Basic" in error for error in report.errors)

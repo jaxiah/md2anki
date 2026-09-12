@@ -54,6 +54,7 @@ The `^anki-1783400717267` line above is an illustrative note ID. Do not invent t
 ## Key Features
 
 - **Vault-native cards:** write normal Markdown; `####` headings become Anki notes.
+- **Basic and Cloze notes:** ordinary blocks become Basic notes, while `{{cN::...}}` in the prompt automatically selects Anki's built-in Cloze type.
 - **Stable anchors:** new cards get `^anki-<id>` written back to Markdown, so future syncs and source links stay attached to the right card.
 - **Incremental sync:** repeat runs skip unchanged cards and update only the notes that changed.
 - **Deck hierarchy:** `ankideck` and the nearest parent heading map directly to nested Anki decks.
@@ -68,6 +69,7 @@ Requirements:
 - Anki desktop
 - AnkiConnect add-on installed and available at `http://127.0.0.1:8765`
 - Anki's built-in `Basic` note type with `Front` and `Back` fields
+- Anki's built-in `Cloze` note type with `Text` and `Extra` fields
 
 Clone or download this repository, then install it from the repository directory:
 
@@ -116,9 +118,14 @@ By default, synchronization state is stored in `<vault-root>/sync_state.json`, a
 
 - A file must have frontmatter `ankideck`.
 - Each `####` heading starts one Anki note. A file may contain multiple notes.
-- The H4 heading is always part of the front.
-- Content before the first `---` in the H4 block is appended to the front.
-- Content after the first `---` becomes the back. Without a separator, the entire body becomes the back.
+- The H4 heading is always included in the question text.
+- A block is inferred as Cloze when its H4 heading or content before the first `---` contains `{{cN::...}}`, including the optional `{{cN::text::hint}}` form. Otherwise it is Basic.
+- Basic with `---`: the H4 and content above the separator become `Front`; content below it becomes `Back`.
+- Basic without `---`: the H4 becomes `Front`; the entire body becomes `Back`.
+- Cloze with `---`: the H4 and content above the separator become `Text`; content below it becomes `Extra`.
+- Cloze without `---`: the H4 and entire body become `Text`; authored `Extra` is empty. The generated source footer is still added to `Extra`.
+- Cloze syntax below `---` does not affect inference because that content belongs to `Extra`.
+- Basic and Cloze blocks may be mixed in the same Markdown file.
 - The nearest preceding H3, H2, or H1 heading is appended to `ankideck` as a child deck.
 - `^anki-<id>` is standalone metadata immediately below the H4 heading; blank lines around it are allowed.
 - `^noanki` in the same metadata position skips the H4 block completely.
@@ -128,23 +135,36 @@ For example, an `ankideck` of `Engineering` under `### Pumps` syncs into `Engine
 
 Only `^anki-*` and `^noanki` are recognized as synchronization metadata.
 
+For example, this block creates one Cloze note and two cards, one for each cloze number:
+
+```markdown
+#### Which runtime properties matter here?
+
+Python uses {{c1::dynamic typing}}, and its standard implementation uses a
+{{c2::global interpreter lock::three-letter abbreviation}}.
+---
+The H4 remains visible as a concise reminder, while this section becomes Extra.
+```
+
+Keep an existing note's inferred type stable. Changing a synchronized Basic note into Cloze, or the reverse, is unsupported because Anki cannot update one note type with the other type's fields. Create a new Markdown block instead when a type change is intentional.
+
 ## Sync Lifecycle
 
 | Markdown state | Apply result |
 | --- | --- |
-| H4 without metadata | Adds a `Basic` note and writes `^anki-<id>` below the H4 |
+| H4 without metadata | Adds an inferred `Basic` or `Cloze` note and writes `^anki-<id>` below the H4 |
 | H4 with `^anki-<id>` and changed content | Updates the existing Anki note |
 | H4 with `^anki-<id>` and unchanged content | Skips the note |
 | H4 with `^anki-<id> DEL` or `^anki-<id> DELETE` | Deletes the Anki note and replaces the ID metadata with `^noanki` |
 | H4 with `^noanki` | Skips the block without adding, updating, or deleting anything |
 
-The generated back includes an `open in Obsidian` link targeting the Markdown file and its `^anki-<id>` block anchor. Renaming a note heading does not break its synchronization identity.
+The generated answer-side field (`Back` or `Extra`) includes an `open in Obsidian` link targeting the Markdown file and its `^anki-<id>` block anchor. Renaming a note heading does not break its synchronization identity.
 
 ## Rendering
 
 `md2anki` renders standard Markdown, tables, fenced code blocks, inline and display math, Obsidian wiki links, and wiki images. Math delimiters are normalized for Anki's built-in MathJax support, and media files are uploaded through AnkiConnect.
 
-For the matching light/dark card presentation, copy [anki-card-style.css](anki-card-style.css) into the Styling section of the Anki `Basic` note type used by these cards.
+For the matching light/dark card presentation, copy [anki-card-style.css](anki-card-style.css) into the Styling section of both the Anki `Basic` and `Cloze` note types used by these cards. The stylesheet includes theme-aware `.cloze` colors.
 
 ## Windows Launcher
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import threading
 from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -11,6 +12,7 @@ from typing import Any
 class MockAnkiConnectState:
     decks: dict[str, int] = field(default_factory=lambda: {"Default": 1})
     notes: dict[int, dict[str, Any]] = field(default_factory=dict)
+    cards: dict[int, dict[str, Any]] = field(default_factory=dict)
     media: dict[str, str] = field(default_factory=dict)
     requests: list[dict[str, Any]] = field(default_factory=list)
     next_deck_id: int = 2
@@ -39,11 +41,25 @@ class MockAnkiConnectState:
     def add_note(
         self,
         deck_name: str,
-        front: str,
-        back: str,
+        model_name: str,
+        fields: dict[str, str],
         note_id: int | None = None,
         tags: list[str] | None = None,
     ) -> int:
+        expected_fields = {
+            "Basic": {"Front", "Back"},
+            "Cloze": {"Text", "Extra"},
+        }.get(model_name)
+        if expected_fields is None:
+            raise ValueError(f"unknown model: {model_name}")
+        if set(fields) != expected_fields:
+            raise ValueError(f"invalid fields for {model_name}: {sorted(fields)}")
+        card_ordinals = [0]
+        if model_name == "Cloze":
+            card_ordinals = self._cloze_ordinals(fields["Text"])
+            if not card_ordinals:
+                raise ValueError("cannot create cloze note without a cloze deletion")
+
         self.add_deck(deck_name)
         if note_id is None:
             note_id = self.next_note_id
@@ -51,17 +67,57 @@ class MockAnkiConnectState:
         else:
             self.next_note_id = max(self.next_note_id, note_id + 1)
 
-        card_id = self.next_card_id
-        self.next_card_id += 1
         self.notes[note_id] = {
             "noteId": note_id,
             "deckName": deck_name,
-            "modelName": "Basic",
-            "fields": {"Front": front, "Back": back},
+            "modelName": model_name,
+            "fields": dict(fields),
             "tags": list(tags or ["md2anki"]),
-            "cards": [card_id],
+            "cards": [],
+            "cardByOrdinal": {},
         }
+        for ordinal in card_ordinals:
+            self._add_card(note_id, deck_name, ordinal)
         return note_id
+
+    @staticmethod
+    def _cloze_ordinals(text: str) -> list[int]:
+        return sorted({int(match) for match in re.findall(r"\{\{c([1-9]\d*)::", text)})
+
+    def _add_card(self, note_id: int, deck_name: str, ordinal: int) -> int:
+        card_id = self.next_card_id
+        self.next_card_id += 1
+        self.cards[card_id] = {
+            "cardId": card_id,
+            "noteId": note_id,
+            "deckName": deck_name,
+            "ordinal": ordinal,
+        }
+        note = self.notes[note_id]
+        note["cardByOrdinal"][ordinal] = card_id
+        note["cards"] = [note["cardByOrdinal"][key] for key in sorted(note["cardByOrdinal"])]
+        return card_id
+
+    def update_note_fields(self, note_id: int, fields: dict[str, str]) -> None:
+        note = self.notes[note_id]
+        expected_fields = {
+            "Basic": {"Front", "Back"},
+            "Cloze": {"Text", "Extra"},
+        }[note["modelName"]]
+        if not set(fields).issubset(expected_fields):
+            raise ValueError(f"invalid fields for {note['modelName']}: {sorted(fields)}")
+
+        note["fields"].update(fields)
+        if note["modelName"] == "Cloze" and "Text" in fields:
+            for ordinal in self._cloze_ordinals(note["fields"]["Text"]):
+                if ordinal not in note["cardByOrdinal"]:
+                    self._add_card(note_id, note["deckName"], ordinal)
+
+    def delete_note(self, note_id: int) -> None:
+        note = self.notes.pop(note_id, None)
+        if note:
+            for card_id in note["cards"]:
+                self.cards.pop(card_id, None)
 
 
 class MockAnkiConnectServer:
@@ -136,32 +192,36 @@ class _Handler(BaseHTTPRequestHandler):
             options = note.get("options") or {}
             if not options.get("allowDuplicate", True):
                 deck_name = note.get("deckName")
-                front = note.get("fields", {}).get("Front")
+                first_field_name = "Text" if note.get("modelName") == "Cloze" else "Front"
+                first_field = note.get("fields", {}).get(first_field_name)
                 for existing in state.notes.values():
-                    if existing["deckName"] == deck_name and existing["fields"].get("Front") == front:
+                    if (
+                        existing["modelName"] == note.get("modelName")
+                        and existing["deckName"] == deck_name
+                        and existing["fields"].get(first_field_name) == first_field
+                    ):
                         raise ValueError("cannot create note because it is a duplicate")
 
             note_id = state.next_note_id
             state.next_note_id += 1
             state.add_note(
                 deck_name=note.get("deckName"),
-                front=note.get("fields", {}).get("Front", ""),
-                back=note.get("fields", {}).get("Back", ""),
+                model_name=note.get("modelName"),
+                fields=note.get("fields", {}),
                 note_id=note_id,
                 tags=list(note.get("tags") or []),
             )
-            state.notes[note_id]["modelName"] = note.get("modelName")
             return note_id
 
         if action == "updateNoteFields":
             note = params["note"]
             note_id = int(note["id"])
-            state.notes[note_id]["fields"].update(note.get("fields") or {})
+            state.update_note_fields(note_id, note.get("fields") or {})
             return None
 
         if action == "deleteNotes":
             for note_id in params.get("notes", []):
-                state.notes.pop(int(note_id), None)
+                state.delete_note(int(note_id))
             return None
 
         if action == "notesInfo":
@@ -169,15 +229,29 @@ class _Handler(BaseHTTPRequestHandler):
             for note_id in params.get("notes", []):
                 note = state.notes.get(int(note_id))
                 if note:
-                    result.append({"noteId": int(note_id), "cards": note["cards"]})
+                    result.append(
+                        {
+                            "noteId": int(note_id),
+                            "modelName": note["modelName"],
+                            "tags": note["tags"],
+                            "fields": {
+                                name: {"value": value, "order": order}
+                                for order, (name, value) in enumerate(note["fields"].items())
+                            },
+                            "cards": note["cards"],
+                        }
+                    )
             return result
 
         if action == "changeDeck":
             cards = {int(card_id) for card_id in params.get("cards", [])}
             deck = params["deck"]
             state.add_deck(deck)
+            for card_id in cards:
+                if card_id in state.cards:
+                    state.cards[card_id]["deckName"] = deck
             for note in state.notes.values():
-                if any(card_id in cards for card_id in note["cards"]):
+                if note["cards"] and all(state.cards[card_id]["deckName"] == deck for card_id in note["cards"]):
                     note["deckName"] = deck
             return None
 

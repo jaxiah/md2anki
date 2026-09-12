@@ -12,6 +12,7 @@ RE_ANKI_ID_LINE = re.compile(r"^[ \t]*\^anki-(\d+)[ \t]*$")
 RE_ANKI_META_LINE = re.compile(r"^[ \t]*\^anki-(\d+)(?:[ \t]+(DEL|DELETE))?[ \t]*$", re.IGNORECASE)
 RE_NOANKI_LINE = re.compile(r"^[ \t]*\^noanki[ \t]*$", re.IGNORECASE)
 RE_BLOCK_ID_LINE = re.compile(r"^[ \t]*\^(id-[A-Za-z0-9-]+)[ \t]*$")
+RE_CLOZE = re.compile(r"\{\{c[1-9]\d*::.+?\}\}", re.DOTALL)
 
 
 @dataclass
@@ -28,6 +29,7 @@ class ParsedNote:
     anki_meta_line_idx: int | None
     delete_requested: bool
     no_anki: bool
+    model_name: str
     front_md: str
     back_md: str
     split_by_separator: bool
@@ -53,6 +55,10 @@ class MarkdownProcessor:
     def __init__(self, vault_root: Path):
         self.vault_root = Path(vault_root).absolute()
         self.md = MarkdownIt("commonmark", {"html": True, "breaks": True, "linkify": True}).use(front_matter_plugin)
+
+    @staticmethod
+    def infer_model_name(text_md: str) -> str:
+        return "Cloze" if RE_CLOZE.search(text_md) else "Basic"
 
     def generate_block_id(self) -> str:
         return f"id-{secrets.token_hex(4)}"
@@ -298,12 +304,25 @@ class MarkdownProcessor:
                         break
 
                 if sep_idx != -1:
-                    front_extra = "\n".join(block_lines[:sep_idx]).strip()
-                    front_part = f"{heading_pure}\n\n{front_extra}".strip() if front_extra else heading_pure
-                    back_part = "\n".join(block_lines[sep_idx + 1 :]).strip()
+                    body_before_separator = "\n".join(block_lines[:sep_idx]).strip()
+                    body_after_separator = "\n".join(block_lines[sep_idx + 1 :]).strip()
+                else:
+                    body_before_separator = "\n".join(block_lines).strip()
+                    body_after_separator = ""
+
+                text_candidate = (
+                    f"{heading_pure}\n\n{body_before_separator}".strip()
+                    if body_before_separator
+                    else heading_pure
+                )
+                model_name = self.infer_model_name(text_candidate)
+
+                if sep_idx != -1 or model_name == "Cloze":
+                    front_part = text_candidate
+                    back_part = body_after_separator
                 else:
                     front_part = heading_pure
-                    back_part = "\n".join(block_lines).strip()
+                    back_part = body_before_separator
 
                 # 父节点选择优先级：最近 H3，其次 H2，再次 H1。
                 parent_meta = latest_parents[3] or latest_parents[2] or latest_parents[1]
@@ -321,6 +340,7 @@ class MarkdownProcessor:
                     anki_meta_line_idx=anki_line_idx,
                     delete_requested=delete_requested,
                     no_anki=no_anki,
+                    model_name=model_name,
                     front_md=front_part,
                     back_md=back_part,
                     split_by_separator=sep_idx != -1,

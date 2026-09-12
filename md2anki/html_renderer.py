@@ -29,9 +29,18 @@ class RenderedNote:
     front_html: str
     back_html: str
     back_html_with_footer: str
+    model_name: str
     media_files: list[MediaItem] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
     obsidian_url: str | None = None
+
+    @property
+    def anki_fields(self) -> dict[str, str]:
+        if self.model_name == "Basic":
+            return {"Front": self.front_html, "Back": self.back_html_with_footer}
+        if self.model_name == "Cloze":
+            return {"Text": self.front_html, "Extra": self.back_html_with_footer}
+        raise ValueError(f"unsupported Anki model: {self.model_name}")
 
 
 class HtmlRenderer:
@@ -64,6 +73,7 @@ class HtmlRenderer:
             front_html=front_html,
             back_html=back_html,
             back_html_with_footer=back_html_with_footer,
+            model_name=note.model_name,
             media_files=front_media + back_media,
             warnings=warnings,
             obsidian_url=note_url,
