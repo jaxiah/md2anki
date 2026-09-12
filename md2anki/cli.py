@@ -2,6 +2,7 @@ import argparse
 from pathlib import Path
 
 from .pipeline import run_pipeline
+from .progress import ProgressReporter
 
 
 def _collect_markdown_files(vault_root: Path, file_args: list[str]) -> list[Path]:
@@ -55,11 +56,7 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Continue syncing remaining notes after a note failure.",
     )
-    parser.add_argument(
-        "--show-progress",
-        action="store_true",
-        help="Show per-stage progress for parse/media/sync.",
-    )
+    parser.add_argument("--verbose", action="store_true", help="Print per-file and per-note progress details.")
     parser.add_argument(
         "--sync-state-file",
         default=None,
@@ -95,22 +92,26 @@ def main(argv: list[str] | None = None) -> int:
     vault_name = vault_root.name
     sync_state_file = Path(args.sync_state_file).absolute() if args.sync_state_file else (vault_root / "sync_state.json")
     markdown_files = _collect_markdown_files(vault_root, args.files)
+    progress = ProgressReporter(verbose=args.verbose)
 
-    report = run_pipeline(
-        markdown_files=markdown_files,
-        vault_root=vault_root,
-        vault_name=vault_name,
-        asset_root=args.asset_root,
-        anki_connect_url=args.anki_connect_url,
-        sync_state_file=sync_state_file,
-        apply_anki_changes=args.apply_anki_changes,
-        write_back_markdown=not args.no_write_back_markdown,
-        request_timeout_seconds=args.request_timeout_seconds,
-        max_retries=args.max_retries,
-        retry_backoff_seconds=args.retry_backoff_seconds,
-        fail_fast=not args.no_fail_fast,
-        show_progress=args.show_progress,
-    )
+    try:
+        report = run_pipeline(
+            markdown_files=markdown_files,
+            vault_root=vault_root,
+            vault_name=vault_name,
+            asset_root=args.asset_root,
+            anki_connect_url=args.anki_connect_url,
+            sync_state_file=sync_state_file,
+            apply_anki_changes=args.apply_anki_changes,
+            write_back_markdown=not args.no_write_back_markdown,
+            request_timeout_seconds=args.request_timeout_seconds,
+            max_retries=args.max_retries,
+            retry_backoff_seconds=args.retry_backoff_seconds,
+            fail_fast=not args.no_fail_fast,
+            progress_callback=progress,
+        )
+    finally:
+        progress.finish()
 
     mode = "apply" if args.apply_anki_changes else "dry-run"
     print(
@@ -120,9 +121,12 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     if report.errors:
-        print("[md2anki] errors:")
-        for err in report.errors:
-            print(f"- {err}")
+        if args.verbose:
+            print("[md2anki] errors:")
+            for err in report.errors:
+                print(f"- {err}")
+        else:
+            print(f"[md2anki] issues={len(report.errors)}; rerun with --verbose for details")
 
     if report.dry_run_actions:
         print(f"[md2anki] dry-run actions: {len(report.dry_run_actions)}")

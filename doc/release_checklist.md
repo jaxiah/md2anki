@@ -71,7 +71,7 @@ md2anki --vault-root <VAULT_ROOT> --file <RELATIVE_FILE>
 Apply only to that file:
 
 ```powershell
-md2anki --vault-root <VAULT_ROOT> --file <RELATIVE_FILE> --show-progress --apply-anki-changes
+md2anki --vault-root <VAULT_ROOT> --file <RELATIVE_FILE> --apply-anki-changes
 ```
 
 - [ ] Only the selected Markdown file is processed.
@@ -94,7 +94,7 @@ md2anki --vault-root <VAULT_ROOT> --file <RELATIVE_FILE> --show-progress --apply
 Run only after the small smoke test succeeds and backups exist:
 
 ```powershell
-md2anki --vault-root <VAULT_ROOT> --show-progress --apply-anki-changes
+md2anki --vault-root <VAULT_ROOT> --apply-anki-changes
 ```
 
 - [ ] The full run completes without failures.
@@ -146,6 +146,10 @@ Check, in order:
 - Move the existing state file aside rather than permanently deleting it.
 - Run apply on one file and confirm that existing `^anki-*` notes are updated instead of duplicated.
 - Continue with a full apply only after the small verification succeeds.
+
+### D4. Inspect Detailed Progress
+
+Rerun the same command with `--verbose` to replace the compact progress bar with per-file, per-media, and per-note status lines.
 
 ---
 

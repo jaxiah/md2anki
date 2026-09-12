@@ -93,8 +93,10 @@ The `md2anki` command can then be run from any directory.
 Run the synchronization:
 
 ```bash
-md2anki --vault-root D:/Notes/MyVault --show-progress --apply-anki-changes
+md2anki --vault-root D:/Notes/MyVault --apply-anki-changes
 ```
+
+Interactive terminals show one compact progress bar followed by the final CRUD summary. Add `--verbose` to replace the bar with per-file and per-note progress details.
 
 To preview the planned add, update, and delete operations without writing anything, omit `--apply-anki-changes`:
 
@@ -146,7 +148,7 @@ For the matching light/dark card presentation, copy [anki-card-style.css](anki-c
 
 ## Windows Launcher
 
-After installing the package, copy `md2anki.cmd` into the root of an Obsidian vault and double-click it. The launcher uses its own directory as `--vault-root`, shows progress, and runs in apply mode.
+After installing the package, copy `md2anki.cmd` into the root of an Obsidian vault and double-click it. The launcher uses its own directory as `--vault-root`, runs in apply mode, and shows a compact progress bar followed by the final CRUD summary.
 
 It invokes the installed package as `python -m md2anki`. To use a specific virtual environment or a Python path containing spaces, set `MD2ANKI_PYTHON` before launching:
 

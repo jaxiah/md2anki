@@ -307,7 +307,8 @@ Markdown writeback requires both:
 - `--file` may be repeated. Without it, all `.md` files under the vault are scanned recursively.
 - `--apply-anki-changes` enables writes.
 - `--no-write-back-markdown` disables Markdown writeback in apply mode.
-- `--show-progress` prints per-stage progress.
+- Interactive terminals show one compact progress bar that is reused across parse, media, and sync stages.
+- `--verbose` replaces the compact bar with per-stage, per-item details for troubleshooting.
 - `--request-timeout-seconds`, `--max-retries`, and `--retry-backoff-seconds` control AnkiConnect resilience.
 - `--no-fail-fast` continues after note-level failures.
 

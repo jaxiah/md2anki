@@ -4,6 +4,7 @@ import pytest
 
 import md2anki.cli as cli
 from md2anki.pipeline import PipelineReport
+from md2anki.progress import ProgressReporter
 
 
 def test_cli_defaults_to_dry_run_and_collects_files(tmp_path: Path, monkeypatch):
@@ -31,7 +32,8 @@ def test_cli_defaults_to_dry_run_and_collects_files(tmp_path: Path, monkeypatch)
     assert captured["max_retries"] == 2
     assert captured["retry_backoff_seconds"] == 0.75
     assert captured["fail_fast"] is True
-    assert captured["show_progress"] is False
+    assert isinstance(captured["progress_callback"], ProgressReporter)
+    assert captured["progress_callback"].verbose is False
 
 
 def test_cli_apply_mode_with_explicit_file(tmp_path: Path, monkeypatch):
@@ -63,7 +65,7 @@ def test_cli_apply_mode_with_explicit_file(tmp_path: Path, monkeypatch):
             "--retry-backoff-seconds",
             "1.5",
             "--no-fail-fast",
-            "--show-progress",
+            "--verbose",
         ]
     )
 
@@ -76,7 +78,8 @@ def test_cli_apply_mode_with_explicit_file(tmp_path: Path, monkeypatch):
     assert captured["max_retries"] == 4
     assert captured["retry_backoff_seconds"] == 1.5
     assert captured["fail_fast"] is False
-    assert captured["show_progress"] is True
+    assert isinstance(captured["progress_callback"], ProgressReporter)
+    assert captured["progress_callback"].verbose is True
 
 
 def test_cli_accepts_legacy_to_anki_alias(tmp_path: Path, monkeypatch):
@@ -96,3 +99,36 @@ def test_cli_rejects_removed_html_mode(tmp_path: Path):
         cli.main(["--vault-root", str(vault), "--to-html"])
 
     assert exc_info.value.code == 2
+
+
+def test_cli_hides_issue_details_without_verbose(tmp_path: Path, monkeypatch, capsys):
+    vault = tmp_path / "vault"
+    vault.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(
+        cli,
+        "run_pipeline",
+        lambda **kwargs: PipelineReport(errors=["specific parser warning"]),
+    )
+
+    assert cli.main(["--vault-root", str(vault)]) == 0
+
+    output = capsys.readouterr().out
+    assert "issues=1" in output
+    assert "rerun with --verbose" in output
+    assert "specific parser warning" not in output
+
+
+def test_cli_verbose_expands_issue_details(tmp_path: Path, monkeypatch, capsys):
+    vault = tmp_path / "vault"
+    vault.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(
+        cli,
+        "run_pipeline",
+        lambda **kwargs: PipelineReport(errors=["specific parser warning"]),
+    )
+
+    assert cli.main(["--vault-root", str(vault), "--verbose"]) == 0
+
+    output = capsys.readouterr().out
+    assert "[md2anki] errors:" in output
+    assert "- specific parser warning" in output

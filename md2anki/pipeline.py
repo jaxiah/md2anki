@@ -1,7 +1,7 @@
 from dataclasses import dataclass, field
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, Callable
 
 from .anki_client import AnkiClient
 from .html_renderer import HtmlRenderer
@@ -35,7 +35,7 @@ def run_pipeline(
     max_retries: int = 2,
     retry_backoff_seconds: float = 0.75,
     fail_fast: bool = True,
-    show_progress: bool = False,
+    progress_callback: Callable[[str, int, int, str | None, str | None], None] | None = None,
     processor: MarkdownProcessor | None = None,
     renderer: HtmlRenderer | None = None,
     anki_client: AnkiClient | None = None,
@@ -63,15 +63,8 @@ def run_pipeline(
     writeback_files_seen: set[str] = set()
 
     def _emit_progress(stage: str, current: int, total: int, name: str | None = None, status: str | None = None) -> None:
-        if not show_progress:
-            return
-        remaining = max(total - current, 0)
-        suffix = ""
-        if name:
-            suffix += f" item={name}"
-        if status:
-            suffix += f" status={status}"
-        print(f"[md2anki][progress] stage={stage} current={current}/{total} remaining={remaining}{suffix}")
+        if progress_callback:
+            progress_callback(stage, current, total, name, status)
 
     def _record_writeback(source_file: str) -> None:
         if source_file not in writeback_files_seen:

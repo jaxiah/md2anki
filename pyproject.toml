@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "md2anki"
 version = "0.1.0"
 description = "Refactored md2anki workflow package"
-readme = "refactor_design.md"
+readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
   "markdown-it-py>=3.0.0",
