@@ -91,7 +91,7 @@ class MarkdownProcessor:
             if idx >= len(lines_all):
                 break
 
-            candidate = lines_all[idx]
+            candidate = lines_all[idx].rstrip("\r\n")
             anki_match = RE_ANKI_META_LINE.match(candidate)
             if anki_match:
                 metadata["anki_note_id"] = anki_match.group(1)
@@ -179,7 +179,7 @@ class MarkdownProcessor:
             first_meta_idx = min(meta_line_indices)
             last_meta_idx = max(meta_line_indices)
             # Remove the contiguous H4 metadata area, including blank lines around
-            # recognized metadata, then reinsert a single canonical ^noanki line.
+            # recognized metadata, then reinsert one canonical, separated marker.
             while first_meta_idx > start_idx and file_lines[first_meta_idx - 1].strip() == "":
                 first_meta_idx -= 1
             while last_meta_idx + 1 < len(file_lines) and file_lines[last_meta_idx + 1].strip() == "":
@@ -189,7 +189,11 @@ class MarkdownProcessor:
 
         newline, _ = self._split_newline(file_lines[line_idx_h4])
         newline = newline or "\n"
-        file_lines[start_idx:start_idx] = [newline, self.append_noanki_to_line(file_lines[line_idx_h4])]
+        file_lines[start_idx:start_idx] = [
+            newline,
+            self.append_noanki_to_line(file_lines[line_idx_h4]),
+            newline,
+        ]
         changed = True
 
         return changed

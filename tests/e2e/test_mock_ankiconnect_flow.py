@@ -338,7 +338,7 @@ def test_delete_existing_note(tmp_path: Path):
         assert int(delete_note_id) not in server.state.notes
         assert delete_note_id not in _load_state(vault_root)["items"]
         delete_section = _extract_section(_read(flow_file), "Card DeleteTarget")
-        assert "^noanki" in delete_section
+        assert "^noanki\n\nDelete baseline line." in delete_section
         assert re.search(r"\^anki-\d+", delete_section) is None
 
 
@@ -370,7 +370,7 @@ def test_noanki_after_delete_is_not_readded(tmp_path: Path):
         assert report.added == 0
         assert server.state.action_count("addNote") == add_count_after_delete
         delete_section = _extract_section(_read(flow_file), "Card DeleteTarget")
-        assert "^noanki" in delete_section
+        assert "^noanki\n\nDelete baseline line." in delete_section
         assert re.search(r"\^anki-\d+", delete_section) is None
 
 
@@ -398,6 +398,7 @@ def test_delete_noanki_conflict_prefers_delete(tmp_path: Path):
         assert report.deleted == 1
         conflict_section = _extract_section(_read(flow_file), "Card ConflictTarget")
         assert conflict_section.count("^noanki") == 1
+        assert "^noanki\n\nConflict baseline line." in conflict_section
         assert re.search(r"\^anki-\d+", conflict_section) is None
 
 

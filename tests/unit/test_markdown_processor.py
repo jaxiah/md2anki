@@ -445,7 +445,7 @@ def test_remove_anki_metadata_and_mark_noanki():
     assert changed is True
     assert all("^anki-123456" not in line for line in lines)
     assert any(line.strip() == "^noanki" for line in lines)
-    assert lines[:3] == ["#### Q\n", "\n", "^noanki\n"]
+    assert lines == ["#### Q\n", "\n", "^noanki\n", "\n", "body\n"]
 
 
 def test_remove_anki_metadata_and_mark_noanki_inserts_blank_after_h4_without_existing_gap():
@@ -455,7 +455,7 @@ def test_remove_anki_metadata_and_mark_noanki_inserts_blank_after_h4_without_exi
     changed = processor.remove_anki_metadata_and_mark_noanki(lines, 0)
 
     assert changed is True
-    assert lines[:3] == ["#### Q\n", "\n", "^noanki\n"]
+    assert lines == ["#### Q\n", "\n", "^noanki\n", "\n", "body\n"]
 
 
 @pytest.mark.parametrize(
@@ -463,27 +463,31 @@ def test_remove_anki_metadata_and_mark_noanki_inserts_blank_after_h4_without_exi
     [
         (
             ["#### Q\n", "^anki-123 DEL\n", "body\n"],
-            ["#### Q\n", "\n", "^noanki\n", "body\n"],
+            ["#### Q\n", "\n", "^noanki\n", "\n", "body\n"],
         ),
         (
             ["#### Q\n", "\n", "^anki-123 DEL\n", "body\n"],
-            ["#### Q\n", "\n", "^noanki\n", "body\n"],
+            ["#### Q\n", "\n", "^noanki\n", "\n", "body\n"],
         ),
         (
             ["#### Q\n", "\n", "\n", "^anki-123 DEL\n", "body\n"],
-            ["#### Q\n", "\n", "^noanki\n", "body\n"],
+            ["#### Q\n", "\n", "^noanki\n", "\n", "body\n"],
         ),
         (
             ["#### Q\n", "^anki-123 DEL\n", "\n", "body\n"],
-            ["#### Q\n", "\n", "^noanki\n", "body\n"],
+            ["#### Q\n", "\n", "^noanki\n", "\n", "body\n"],
         ),
         (
             ["#### Q\n", "\n", "^anki-123 DEL\n", "\n", "body\n"],
-            ["#### Q\n", "\n", "^noanki\n", "body\n"],
+            ["#### Q\n", "\n", "^noanki\n", "\n", "body\n"],
         ),
         (
             ["#### Q\n", "\n", "^anki-123 DEL\n", "\n", "^noanki\n", "\n", "body\n"],
-            ["#### Q\n", "\n", "^noanki\n", "body\n"],
+            ["#### Q\n", "\n", "^noanki\n", "\n", "body\n"],
+        ),
+        (
+            ["#### Q\r\n", "\r\n", "^anki-123 DEL\r\n", "\r\n", "body\r\n"],
+            ["#### Q\r\n", "\r\n", "^noanki\r\n", "\r\n", "body\r\n"],
         ),
     ],
 )
