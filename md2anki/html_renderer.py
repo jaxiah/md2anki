@@ -39,7 +39,7 @@ class RenderedNote:
         if self.model_name == "Basic":
             return {"Front": self.front_html, "Back": self.back_html_with_footer}
         if self.model_name == "Cloze":
-            return {"Text": self.front_html, "Extra": self.back_html_with_footer}
+            return {"Text": self.front_html, "Back Extra": self.back_html_with_footer}
         raise ValueError(f"unsupported Anki model: {self.model_name}")
 
 

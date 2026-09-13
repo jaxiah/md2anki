@@ -275,10 +275,10 @@ def test_mixed_basic_and_cloze_notes_map_to_model_specific_fields():
 
     rendered_notes = [renderer.render(note) for note in doc.notes]
     assert set(rendered_notes[0].anki_fields) == {"Front", "Back"}
-    assert set(rendered_notes[1].anki_fields) == {"Text", "Extra"}
+    assert set(rendered_notes[1].anki_fields) == {"Text", "Back Extra"}
     assert "{{c1::cloze deletion}}" in rendered_notes[1].anki_fields["Text"]
-    assert "This content belongs in Extra." in rendered_notes[1].anki_fields["Extra"]
-    assert set(rendered_notes[2].anki_fields) == {"Text", "Extra"}
-    assert "open in Obsidian" in rendered_notes[2].anki_fields["Extra"]
+    assert "This content belongs in Extra." in rendered_notes[1].anki_fields["Back Extra"]
+    assert set(rendered_notes[2].anki_fields) == {"Text", "Back Extra"}
+    assert "open in Obsidian" in rendered_notes[2].anki_fields["Back Extra"]
 
     _dump_case_result("mixed_basic_and_cloze_notes_map_to_model_specific_fields", doc, rendered_notes)

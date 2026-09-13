@@ -1,16 +1,40 @@
 from __future__ import annotations
 
+import base64
 import json
 import re
 import threading
 from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 from typing import Any
 
 
 @dataclass
 class MockAnkiConnectState:
     decks: dict[str, int] = field(default_factory=lambda: {"Default": 1})
+    model_fields: dict[str, list[str]] = field(
+        default_factory=lambda: {
+            "Basic": ["Front", "Back"],
+            "Cloze": ["Text", "Back Extra"],
+        }
+    )
+    model_templates: dict[str, dict[str, dict[str, str]]] = field(
+        default_factory=lambda: {
+            "Basic": {
+                "Card 1": {
+                    "Front": "{{Front}}",
+                    "Back": "{{FrontSide}}\n\n<hr id=answer>\n\n{{Back}}",
+                }
+            },
+            "Cloze": {
+                "Cloze": {
+                    "Front": "{{cloze:Text}}",
+                    "Back": "{{cloze:Text}}<br>\n{{Back Extra}}",
+                }
+            },
+        }
+    )
     notes: dict[int, dict[str, Any]] = field(default_factory=dict)
     cards: dict[int, dict[str, Any]] = field(default_factory=dict)
     media: dict[str, str] = field(default_factory=dict)
@@ -46,12 +70,11 @@ class MockAnkiConnectState:
         note_id: int | None = None,
         tags: list[str] | None = None,
     ) -> int:
-        expected_fields = {
-            "Basic": {"Front", "Back"},
-            "Cloze": {"Text", "Extra"},
-        }.get(model_name)
-        if expected_fields is None:
+        if model_name not in self.model_fields:
             raise ValueError(f"unknown model: {model_name}")
+        expected_fields = set(self.model_fields[model_name])
+        # Real AnkiConnect silently ignores unknown fields. This stricter mock
+        # guards md2anki's outbound contract before information can be lost.
         if set(fields) != expected_fields:
             raise ValueError(f"invalid fields for {model_name}: {sorted(fields)}")
         card_ordinals = [0]
@@ -82,7 +105,7 @@ class MockAnkiConnectState:
 
     @staticmethod
     def _cloze_ordinals(text: str) -> list[int]:
-        return sorted({int(match) for match in re.findall(r"\{\{c([1-9]\d*)::", text)})
+        return sorted({int(match) - 1 for match in re.findall(r"\{\{c([1-9]\d*)::", text)})
 
     def _add_card(self, note_id: int, deck_name: str, ordinal: int) -> int:
         card_id = self.next_card_id
@@ -91,7 +114,7 @@ class MockAnkiConnectState:
             "cardId": card_id,
             "noteId": note_id,
             "deckName": deck_name,
-            "ordinal": ordinal,
+            "ord": ordinal,
         }
         note = self.notes[note_id]
         note["cardByOrdinal"][ordinal] = card_id
@@ -100,10 +123,7 @@ class MockAnkiConnectState:
 
     def update_note_fields(self, note_id: int, fields: dict[str, str]) -> None:
         note = self.notes[note_id]
-        expected_fields = {
-            "Basic": {"Front", "Back"},
-            "Cloze": {"Text", "Extra"},
-        }[note["modelName"]]
+        expected_fields = set(self.model_fields[note["modelName"]])
         if not set(fields).issubset(expected_fields):
             raise ValueError(f"invalid fields for {note['modelName']}: {sorted(fields)}")
 
@@ -173,7 +193,19 @@ class _Handler(BaseHTTPRequestHandler):
         state = self.server.state
 
         if action == "deckNamesAndIds":
-            return {name: str(deck_id) for name, deck_id in state.decks.items()}
+            return dict(state.decks)
+
+        if action == "modelFieldNames":
+            model_name = params["modelName"]
+            if model_name not in state.model_fields:
+                raise ValueError(f"model was not found: {model_name}")
+            return list(state.model_fields[model_name])
+
+        if action == "modelTemplates":
+            model_name = params["modelName"]
+            if model_name not in state.model_templates:
+                raise ValueError(f"model was not found: {model_name}")
+            return state.model_templates[model_name]
 
         if action == "createDeck":
             deck = params["deck"]
@@ -181,7 +213,12 @@ class _Handler(BaseHTTPRequestHandler):
 
         if action == "storeMediaFile":
             filename = params["filename"]
-            state.media[filename] = params.get("data") or params.get("path") or ""
+            if params.get("data") is not None:
+                state.media[filename] = params["data"]
+            elif params.get("path") is not None:
+                state.media[filename] = base64.b64encode(Path(params["path"]).read_bytes()).decode("ascii")
+            else:
+                state.media[filename] = ""
             return None
 
         if action == "retrieveMediaFile":
@@ -241,6 +278,8 @@ class _Handler(BaseHTTPRequestHandler):
                             "cards": note["cards"],
                         }
                     )
+                else:
+                    result.append({})
             return result
 
         if action == "changeDeck":

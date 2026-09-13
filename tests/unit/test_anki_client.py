@@ -1,5 +1,6 @@
 from dataclasses import dataclass, field
 from pathlib import Path
+from types import SimpleNamespace
 
 import requests
 
@@ -43,7 +44,7 @@ class FakeRendered:
     @property
     def anki_fields(self) -> dict[str, str]:
         if self.model_name == "Cloze":
-            return {"Text": self.front_html, "Extra": self.back_html_with_footer}
+            return {"Text": self.front_html, "Back Extra": self.back_html_with_footer}
         return {"Front": self.front_html, "Back": self.back_html_with_footer}
 
 
@@ -55,6 +56,57 @@ def _new_client(tmp_path: Path, apply_changes: bool = False) -> AnkiClient:
     )
     client.apply_changes = apply_changes
     return client
+
+
+def test_validate_model_contracts_accepts_exact_builtin_fields(tmp_path: Path):
+    client = _new_client(tmp_path, apply_changes=True)
+    calls: list[tuple[str, str]] = []
+
+    def _invoke(action, **params):
+        calls.append((action, params["modelName"]))
+        fields = {
+            "Basic": ["Front", "Back"],
+            "Cloze": ["Text", "Back Extra"],
+        }
+        return True, fields[params["modelName"]]
+
+    client.invoke = _invoke
+    notes = [
+        FakeRendered(parsed=FakeParsed(model_name="Basic")),
+        FakeRendered(parsed=FakeParsed(model_name="Cloze", front_md="{{c1::x}}", back_md="")),
+    ]
+
+    errors = client.validate_model_contracts(notes)
+
+    assert errors == []
+    assert calls == [("modelFieldNames", "Basic"), ("modelFieldNames", "Cloze")]
+
+
+def test_validate_model_contracts_rejects_remote_field_mismatch(tmp_path: Path):
+    client = _new_client(tmp_path, apply_changes=True)
+    client.invoke = lambda action, **params: (True, ["Text", "Extra"])
+    note = FakeRendered(parsed=FakeParsed(model_name="Cloze", front_md="{{c1::x}}", back_md=""))
+
+    errors = client.validate_model_contracts([note])
+
+    assert len(errors) == 1
+    assert "Cloze field contract mismatch" in errors[0]
+    assert "Back Extra" in errors[0]
+
+
+def test_validate_model_contracts_rejects_invalid_outbound_fields_before_remote_query(tmp_path: Path):
+    client = _new_client(tmp_path, apply_changes=True)
+
+    def _unexpected_invoke(*args, **kwargs):
+        raise AssertionError("remote query must not run for an invalid local payload")
+
+    client.invoke = _unexpected_invoke
+    note = SimpleNamespace(model_name="Cloze", anki_fields={"Text": "{{c1::x}}", "Extra": "wrong"})
+
+    errors = client.validate_model_contracts([note])
+
+    assert len(errors) == 1
+    assert "invalid outbound fields for Cloze" in errors[0]
 
 
 def test_sync_dry_run_has_no_side_effects(tmp_path: Path):
@@ -137,7 +189,7 @@ def test_sync_add_uses_builtin_cloze_model_and_fields(tmp_path: Path):
     assert add_payload["modelName"] == "Cloze"
     assert add_payload["fields"] == {
         "Text": "<p>Q {{c1::A}}</p>",
-        "Extra": "<p>Extra</p><div>source</div>",
+        "Back Extra": "<p>Extra</p><div>source</div>",
     }
 
 
@@ -176,7 +228,7 @@ def test_sync_update_uses_model_specific_fields(tmp_path: Path):
         "id": 655,
         "fields": {
             "Text": "<p>Q {{c1::updated}}</p>",
-            "Extra": "<p>Extra</p><div>source</div>",
+            "Back Extra": "<p>Extra</p><div>source</div>",
         },
     }
 
@@ -205,7 +257,7 @@ def test_finalize_added_cloze_note_uses_text_and_extra_fields(tmp_path: Path):
         "id": 656,
         "fields": {
             "Text": "<p>Q {{c1::A}}</p>",
-            "Extra": '<div><a href="obsidian://open">open in Obsidian</a></div>',
+            "Back Extra": '<div><a href="obsidian://open">open in Obsidian</a></div>',
         },
     }
 

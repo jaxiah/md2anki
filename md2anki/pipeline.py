@@ -115,6 +115,12 @@ def run_pipeline(
             rendered_payloads.append(rendered)
 
     if apply_anki_changes:
+        contract_errors = anki_client.validate_model_contracts(rendered_payloads)
+        if contract_errors:
+            report.failed += len(contract_errors)
+            report.errors.extend(contract_errors)
+            return report
+
         prewarm_result = anki_client.prewarm_media(rendered_payloads, progress_callback=_emit_progress)
         report.failed += prewarm_result.failed
         report.errors.extend(prewarm_result.errors)

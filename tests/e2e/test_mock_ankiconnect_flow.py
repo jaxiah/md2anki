@@ -1,6 +1,9 @@
+import base64
 import json
 import re
 from pathlib import Path
+
+import requests
 
 from md2anki import run_pipeline
 
@@ -142,6 +145,16 @@ def _run_apply(vault_root: Path, server: MockAnkiConnectServer):
     )
 
 
+def _invoke_mock(server: MockAnkiConnectServer, action: str, **params):
+    response = requests.post(
+        server.url,
+        json={"action": action, "version": 6, "params": params},
+        timeout=5,
+    )
+    response.raise_for_status()
+    return response.json()
+
+
 def _read(path: Path) -> str:
     return path.read_text(encoding="utf-8")
 
@@ -204,6 +217,11 @@ def _assert_initial_add(vault_root: Path, server: MockAnkiConnectServer) -> None
     assert report.updated == 0
     assert server.state.action_count("addNote") == 9
     assert server.state.action_count("updateNoteFields") == 9
+    queried_models = {
+        request["params"]["modelName"]
+        for request in server.state.requests_for("modelFieldNames")
+    }
+    assert queried_models == {"Basic", "Cloze"}
 
     flow_after = _read(vault_root / "01_flow.md")
     assert flow_after.count("^anki-") == 4
@@ -223,6 +241,40 @@ def test_add_initial_notes_finalizes_footer_without_real_anki(tmp_path: Path):
 
     with MockAnkiConnectServer() as server:
         _assert_initial_add(vault_root, server)
+
+
+def test_mock_read_only_contract_shapes_match_observed_ankiconnect():
+    with MockAnkiConnectServer() as server:
+        decks = _invoke_mock(server, "deckNamesAndIds")
+        basic_fields = _invoke_mock(server, "modelFieldNames", modelName="Basic")
+        cloze_fields = _invoke_mock(server, "modelFieldNames", modelName="Cloze")
+        cloze_templates = _invoke_mock(server, "modelTemplates", modelName="Cloze")
+        missing_note = _invoke_mock(server, "notesInfo", notes=[9999999999999])
+        missing_media = _invoke_mock(server, "retrieveMediaFile", filename="missing.bin")
+
+        assert isinstance(decks["result"]["Default"], int)
+        assert basic_fields == {"result": ["Front", "Back"], "error": None}
+        assert cloze_fields == {"result": ["Text", "Back Extra"], "error": None}
+        assert cloze_templates["result"]["Cloze"]["Back"] == "{{cloze:Text}}<br>\n{{Back Extra}}"
+        assert missing_note == {"result": [{}], "error": None}
+        assert missing_media == {"result": False, "error": None}
+
+
+def test_model_contract_mismatch_stops_before_any_write(tmp_path: Path):
+    vault_root = tmp_path / "mock_vault"
+    _write_vault(vault_root)
+
+    with MockAnkiConnectServer() as server:
+        server.state.model_fields["Cloze"] = ["Text", "Extra"]
+
+        report = _run_apply(vault_root, server)
+
+        assert report.failed == 1
+        assert any("Cloze field contract mismatch" in error for error in report.errors)
+        assert server.state.action_count("createDeck") == 0
+        assert server.state.action_count("storeMediaFile") == 0
+        assert server.state.action_count("addNote") == 0
+        assert server.state.action_count("updateNoteFields") == 0
 
 
 def test_rerun_skips_after_initial_add(tmp_path: Path):
@@ -406,18 +458,21 @@ def test_mixed_basic_and_cloze_create_correct_notes_and_cards(tmp_path: Path):
         assert len(basic_note["cards"]) == 1
 
         assert cloze_note["modelName"] == "Cloze"
-        assert set(cloze_note["fields"]) == {"Text", "Extra"}
+        assert set(cloze_note["fields"]) == {"Text", "Back Extra"}
         assert "Card MixedCloze" in cloze_note["fields"]["Text"]
         assert "{{c1::velocity}}" in cloze_note["fields"]["Text"]
-        assert "Additional cloze context." in cloze_note["fields"]["Extra"]
-        assert "open in Obsidian" in cloze_note["fields"]["Extra"]
-        assert f"%23%5Eanki-{cloze_id}" in cloze_note["fields"]["Extra"]
+        assert "Additional cloze context." in cloze_note["fields"]["Back Extra"]
+        assert "open in Obsidian" in cloze_note["fields"]["Back Extra"]
+        assert f"%23%5Eanki-{cloze_id}" in cloze_note["fields"]["Back Extra"]
         assert len(cloze_note["cards"]) == 2
+        assert [server.state.cards[card_id]["ord"] for card_id in cloze_note["cards"]] == [0, 1]
 
         assert no_extra_note["modelName"] == "Cloze"
         assert "Card MixedClozeNoExtra" in no_extra_note["fields"]["Text"]
-        assert "open in Obsidian" in no_extra_note["fields"]["Extra"]
+        assert "open in Obsidian" in no_extra_note["fields"]["Back Extra"]
         assert len(no_extra_note["cards"]) == 1
+
+        assert server.state.media["diagram.png"] == base64.b64encode(b"diagram").decode("ascii")
 
 
 def test_cloze_update_preserves_existing_cards_and_adds_new_ordinal(tmp_path: Path):

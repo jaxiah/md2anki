@@ -20,7 +20,8 @@
 - [ ] Anki Desktop is installed for the real-vault smoke test.
 - [ ] AnkiConnect is enabled at the configured URL, normally `http://127.0.0.1:8765`.
 - [ ] The Anki profile contains a `Basic` note type with `Front` and `Back` fields.
-- [ ] The Anki profile contains a `Cloze` note type with `Text` and `Extra` fields.
+- [ ] The Anki profile contains a `Cloze` note type with `Text` and `Back Extra` fields.
+- [ ] Apply-mode model preflight succeeds before any deck, media, or note writes.
 
 ### A3. Full Automated Suite
 
@@ -47,9 +48,10 @@ Required result:
 
 - [ ] All mock E2E scenarios pass.
 - [ ] Add, unchanged rerun, update, and delete all behave as expected.
-- [ ] Mixed Basic/Cloze notes, multiple cards per Cloze note, and Cloze without authored Extra behave as expected.
+- [ ] Mixed Basic/Cloze notes, multiple cards per Cloze note, and Cloze without authored Back Extra behave as expected.
 - [ ] Updating or moving a Cloze note preserves and moves all derived cards.
-- [ ] An invalid Basic/Cloze type transition fails without replacing the existing note.
+- [ ] The strict mock rejects an invalid Basic/Cloze type transition without replacing the existing note.
+- [ ] A model-field mismatch aborts before `createDeck`, `storeMediaFile`, `addNote`, or `updateNoteFields`.
 - [ ] A successful delete leaves `^noanki` and removes the deleted note from state.
 - [ ] Media and source-footer behavior remain covered.
 - [ ] The test does not connect to or modify a real Anki database.
@@ -80,9 +82,9 @@ md2anki --vault-root <VAULT_ROOT> --file <RELATIVE_FILE> --apply-anki-changes
 
 - [ ] Only the selected Markdown file is processed.
 - [ ] A new Basic note is created with correct Front, Back, deck, and `md2anki` tag.
-- [ ] A new Cloze note is created with correct Text, Extra, deck, and `md2anki` tag.
+- [ ] A new Cloze note is created with correct Text, Back Extra, deck, and `md2anki` tag.
 - [ ] Distinct `cN` values create the expected number of Cloze cards.
-- [ ] A Cloze block without `---` keeps its full body in Text and still receives the source footer in Extra.
+- [ ] A Cloze block without `---` keeps its full body in Text and still receives the source footer in Back Extra.
 - [ ] `^anki-<id>` is written below the correct H4.
 - [ ] The `open in Obsidian` footer opens the exact H4 block.
 - [ ] Images, code blocks, and math render correctly.

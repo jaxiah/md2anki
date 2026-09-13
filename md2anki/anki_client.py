@@ -9,6 +9,12 @@ from typing import Any
 import requests
 
 
+BUILTIN_MODEL_FIELDS: dict[str, tuple[str, ...]] = {
+    "Basic": ("Front", "Back"),
+    "Cloze": ("Text", "Back Extra"),
+}
+
+
 @dataclass
 class SyncResult:
     """一次同步的聚合结果，供 pipeline 统计与回写使用。"""
@@ -146,6 +152,54 @@ class AnkiClient:
             self.deck_cache.add(deck_name)
             return True
         return False
+
+    def validate_model_contracts(self, rendered_notes) -> list[str]:
+        """Validate outbound fields and live Anki models before any writes."""
+        errors: list[str] = []
+        used_models: set[str] = set()
+
+        for rendered in rendered_notes:
+            model_name = getattr(rendered, "model_name", None)
+            if model_name is None:
+                continue
+
+            expected_fields = BUILTIN_MODEL_FIELDS.get(model_name)
+            if expected_fields is None:
+                errors.append(f"unsupported Anki model: {model_name}")
+                continue
+
+            try:
+                actual_fields = tuple(rendered.anki_fields)
+            except Exception as exc:
+                errors.append(f"cannot build outbound fields for {model_name}: {exc}")
+                continue
+
+            if actual_fields != expected_fields:
+                errors.append(
+                    f"invalid outbound fields for {model_name}: "
+                    f"expected {list(expected_fields)}, got {list(actual_fields)}"
+                )
+                continue
+            used_models.add(model_name)
+
+        if errors or self.is_dry_run():
+            return errors
+
+        for model_name in sorted(used_models):
+            success, result = self.invoke("modelFieldNames", modelName=model_name)
+            if not success:
+                errors.append(f"modelFieldNames failed for {model_name}: {result}")
+                continue
+
+            expected_fields = BUILTIN_MODEL_FIELDS[model_name]
+            actual_fields = tuple(result or [])
+            if actual_fields != expected_fields:
+                errors.append(
+                    f"{model_name} field contract mismatch: "
+                    f"expected {list(expected_fields)}, got {list(actual_fields)}"
+                )
+
+        return errors
 
     def compute_content_hash(self, rendered_note: Any) -> str:
         # hash 仅基于 markdown 语义与媒体引用，不依赖渲染后的 HTML/footer。

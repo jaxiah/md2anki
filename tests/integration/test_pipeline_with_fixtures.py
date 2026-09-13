@@ -35,6 +35,8 @@ Back line
 
     def _invoke(action, **params):
         calls.append(action)
+        if action == "modelFieldNames":
+            return True, ["Front", "Back"]
         if action in {"createDeck", "storeMediaFile"}:
             return True, None
         if action == "addNote":
@@ -65,16 +67,17 @@ Back line
     assert "9001" in state["items"]
     final_url = "obsidian://open?vault=sample-notes&file=01_add%23%5Eanki-9001"
     assert state["items"]["9001"]["obsidian_url"] == final_url
-    assert calls == ["createDeck", "addNote", "updateNoteFields"]
+    assert calls == ["modelFieldNames", "createDeck", "addNote", "updateNoteFields"]
     assert update_payloads[0]["id"] == 9001
     assert final_url in update_payloads[0]["fields"]["Back"]
 
     client_second_run = _make_client(tmp_path, apply_changes=True)
 
-    def _unexpected_invoke(*args, **kwargs):
-        raise AssertionError("second run should skip without Anki calls")
+    def _contract_only(action, **params):
+        assert action == "modelFieldNames"
+        return True, ["Front", "Back"]
 
-    client_second_run.invoke = _unexpected_invoke
+    client_second_run.invoke = _contract_only
 
     second_report = run_pipeline(
         markdown_files=[md_file],
@@ -215,6 +218,8 @@ Back line 2
     client = _make_client(tmp_path, apply_changes=True)
 
     def _invoke(action, **params):
+        if action == "modelFieldNames":
+            return True, ["Front", "Back"]
         if action in {"createDeck", "storeMediaFile"}:
             return True, None
         if action == "addNote":
@@ -442,6 +447,8 @@ Body C
     next_id = {"value": 9200}
 
     def _invoke(action, **params):
+        if action == "modelFieldNames":
+            return True, ["Front", "Back"]
         if action in {"createDeck", "storeMediaFile"}:
             return True, None
         if action == "addNote":
@@ -496,6 +503,8 @@ Body B1
     next_id = {"value": 9300}
 
     def _invoke(action, **params):
+        if action == "modelFieldNames":
+            return True, ["Front", "Back"]
         if action in {"createDeck", "storeMediaFile"}:
             return True, None
         if action == "addNote":
@@ -547,6 +556,8 @@ ankideck: DeckA
 
     def _invoke(action, **params):
         calls.append(action)
+        if action == "modelFieldNames":
+            return True, ["Front", "Back"]
         if action == "createDeck":
             return True, None
         if action == "storeMediaFile":

@@ -4,6 +4,10 @@ Turn Obsidian-style Markdown into Anki cards, without leaving your vault.
 
 `md2anki` treats each `####` heading as a flashcard, renders the card body to HTML, uploads local images through AnkiConnect, and adds an "open in Obsidian" link back to the exact source block. Later runs only add, update, delete, or skip what changed.
 
+## Basic and Cloze
+
+### Basic note
+
 <table>
 <tr>
 <th width="50%">Obsidian source after first sync</th>
@@ -49,7 +53,55 @@ convert velocity into pressure.
 </tr>
 </table>
 
-The `^anki-1783400717267` line above is an illustrative note ID. Do not invent this value for a new card: omit the line, run an apply sync, and `md2anki` will write back the ID returned by AnkiConnect.
+### Cloze note
+
+<table>
+<tr>
+<th width="50%">Obsidian source after first sync</th>
+<th width="50%">Anki result</th>
+</tr>
+<tr>
+<td width="50%" valign="top">
+
+<pre><code>---
+ankideck: Programming::Python
+---
+
+#### Which runtime properties matter here?
+
+^anki-1783400717268
+
+Python uses {{c1::dynamic typing}}, and CPython
+uses a {{c2::global interpreter lock::three-letter abbreviation}}.
+
+---
+
+The lock is commonly abbreviated GIL.
+</code></pre>
+
+</td>
+<td width="50%" valign="top">
+
+<div>
+  <p><strong>One note creates two cards</strong></p>
+  <p><strong>Card 1 question</strong></p>
+  <p>Which runtime properties matter here?</p>
+  <p>Python uses <strong>[...]</strong>, and CPython uses a global interpreter lock.</p>
+  <hr>
+  <p><strong>Card 2 question</strong></p>
+  <p>Which runtime properties matter here?</p>
+  <p>Python uses dynamic typing, and CPython uses a <strong>[three-letter abbreviation]</strong>.</p>
+  <hr>
+  <p><strong>Back Extra</strong></p>
+  <p>The lock is commonly abbreviated GIL.</p>
+  <p><a href="#">open in Obsidian</a></p>
+</div>
+
+</td>
+</tr>
+</table>
+
+The `^anki-...` lines above are illustrative note IDs. Do not invent one for a new note: omit the line, run an apply sync, and `md2anki` will write back the ID returned by AnkiConnect. Cloze syntax is inferred per H4 block, so Basic and Cloze notes can live in the same Markdown file.
 
 ## Key Features
 
@@ -57,6 +109,7 @@ The `^anki-1783400717267` line above is an illustrative note ID. Do not invent t
 - **Basic and Cloze notes:** ordinary blocks become Basic notes, while `{{cN::...}}` in the prompt automatically selects Anki's built-in Cloze type.
 - **Stable anchors:** new cards get `^anki-<id>` written back to Markdown, so future syncs and source links stay attached to the right card.
 - **Incremental sync:** repeat runs skip unchanged cards and update only the notes that changed.
+- **Strict model contracts:** apply mode verifies the exact Basic/Cloze field names through a read-only AnkiConnect query before making any writes.
 - **Deck hierarchy:** `ankideck` and the nearest parent heading map directly to nested Anki decks.
 - **One-click source return:** every Anki card includes an `open in Obsidian` footer that jumps back to the exact Markdown block.
 - **Rich rendering:** supports Markdown, tables, code blocks, math, wiki links, and `![[image.png|width]]` embeds.
@@ -69,7 +122,7 @@ Requirements:
 - Anki desktop
 - AnkiConnect add-on installed and available at `http://127.0.0.1:8765`
 - Anki's built-in `Basic` note type with `Front` and `Back` fields
-- Anki's built-in `Cloze` note type with `Text` and `Extra` fields
+- Anki's built-in `Cloze` note type with `Text` and `Back Extra` fields
 
 Clone or download this repository, then install it from the repository directory:
 
@@ -114,6 +167,8 @@ md2anki --vault-root D:/Notes/MyVault --file "Biology/cells.md" --apply-anki-cha
 
 By default, synchronization state is stored in `<vault-root>/sync_state.json`, and images are resolved under `<vault-root>/assets`. Override these locations with `--sync-state-file` and `--asset-root` when needed.
 
+Before apply mode creates decks, uploads media, or changes notes, it calls the read-only AnkiConnect `modelFieldNames` action for every note type used in the run. A missing, renamed, reordered, or additional field aborts the run instead of allowing AnkiConnect to silently ignore an invalid payload.
+
 ## Card Format
 
 - A file must have frontmatter `ankideck`.
@@ -122,9 +177,9 @@ By default, synchronization state is stored in `<vault-root>/sync_state.json`, a
 - A block is inferred as Cloze when its H4 heading or content before the first `---` contains `{{cN::...}}`, including the optional `{{cN::text::hint}}` form. Otherwise it is Basic.
 - Basic with `---`: the H4 and content above the separator become `Front`; content below it becomes `Back`.
 - Basic without `---`: the H4 becomes `Front`; the entire body becomes `Back`.
-- Cloze with `---`: the H4 and content above the separator become `Text`; content below it becomes `Extra`.
-- Cloze without `---`: the H4 and entire body become `Text`; authored `Extra` is empty. The generated source footer is still added to `Extra`.
-- Cloze syntax below `---` does not affect inference because that content belongs to `Extra`.
+- Cloze with `---`: the H4 and content above the separator become `Text`; content below it becomes `Back Extra`.
+- Cloze without `---`: the H4 and entire body become `Text`; authored `Back Extra` is empty. The generated source footer is still added to `Back Extra`.
+- Cloze syntax below `---` does not affect inference because that content belongs to `Back Extra`.
 - Basic and Cloze blocks may be mixed in the same Markdown file.
 - The nearest preceding H3, H2, or H1 heading is appended to `ankideck` as a child deck.
 - `^anki-<id>` is standalone metadata immediately below the H4 heading; blank lines around it are allowed.
@@ -143,7 +198,7 @@ For example, this block creates one Cloze note and two cards, one for each cloze
 Python uses {{c1::dynamic typing}}, and its standard implementation uses a
 {{c2::global interpreter lock::three-letter abbreviation}}.
 ---
-The H4 remains visible as a concise reminder, while this section becomes Extra.
+The H4 remains visible as a concise reminder, while this section becomes Back Extra.
 ```
 
 Keep an existing note's inferred type stable. Changing a synchronized Basic note into Cloze, or the reverse, is unsupported because Anki cannot update one note type with the other type's fields. Create a new Markdown block instead when a type change is intentional.
@@ -158,7 +213,7 @@ Keep an existing note's inferred type stable. Changing a synchronized Basic note
 | H4 with `^anki-<id> DEL` or `^anki-<id> DELETE` | Deletes the Anki note and replaces the ID metadata with `^noanki` |
 | H4 with `^noanki` | Skips the block without adding, updating, or deleting anything |
 
-The generated answer-side field (`Back` or `Extra`) includes an `open in Obsidian` link targeting the Markdown file and its `^anki-<id>` block anchor. Renaming a note heading does not break its synchronization identity.
+The generated answer-side field (`Back` or `Back Extra`) includes an `open in Obsidian` link targeting the Markdown file and its `^anki-<id>` block anchor. Renaming a note heading does not break its synchronization identity.
 
 ## Rendering
 

@@ -136,9 +136,9 @@ def test_cloze_rendering_preserves_markers_and_maps_anki_fields(tmp_path: Path):
     assert rendered.model_name == "Cloze"
     assert "{{c1::<strong>velocity</strong>::energy form}}" in rendered.anki_fields["Text"]
     assert "{{c2::pressure}}" in rendered.anki_fields["Text"]
-    assert "Additional context." in rendered.anki_fields["Extra"]
-    assert "open in Obsidian" in rendered.anki_fields["Extra"]
-    assert set(rendered.anki_fields) == {"Text", "Extra"}
+    assert "Additional context." in rendered.anki_fields["Back Extra"]
+    assert "open in Obsidian" in rendered.anki_fields["Back Extra"]
+    assert set(rendered.anki_fields) == {"Text", "Back Extra"}
 
 
 def test_cloze_without_authored_extra_still_gets_source_footer(tmp_path: Path):
@@ -153,7 +153,7 @@ def test_cloze_without_authored_extra_still_gets_source_footer(tmp_path: Path):
     rendered = _render_case("cloze_without_extra", renderer, note)
 
     assert rendered.back_html == ""
-    assert "open in Obsidian" in rendered.anki_fields["Extra"]
+    assert "open in Obsidian" in rendered.anki_fields["Back Extra"]
 
 
 def test_wiki_link_conversion_with_alias(tmp_path: Path):

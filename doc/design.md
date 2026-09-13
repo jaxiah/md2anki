@@ -23,6 +23,7 @@ md2anki synchronizes H4-based card blocks from Obsidian-style Markdown into Anki
 - Render question and answer-side Markdown into HTML.
 - Normalize Obsidian wiki links, wiki images, and math delimiters.
 - Synchronize notes through AnkiConnect with ADD, UPDATE, DELETE, and SKIP behavior.
+- Validate exact built-in model field contracts through read-only AnkiConnect queries before any apply-mode writes.
 - Maintain `sync_state.json` for content, deck, source URL, and media tracking.
 - Write `^anki-<id>` after successful additions and `^noanki` after successful deletions.
 - Provide a read-only dry-run mode and an explicit apply mode.
@@ -35,7 +36,7 @@ md2anki synchronizes H4-based card blocks from Obsidian-style Markdown into Anki
 
 ### 1.4 Out of Scope
 
-- Managing Anki note types or card templates. Sync targets the existing built-in `Basic` (`Front`, `Back`) and `Cloze` (`Text`, `Extra`) note types.
+- Managing Anki note types or card templates. Sync targets the existing built-in `Basic` (`Front`, `Back`) and `Cloze` (`Text`, `Back Extra`) note types.
 - Migrating an existing synchronized note between Basic and Cloze. An intentional type change requires a new note identity.
 - Merging competing edits from multiple Markdown sources that target the same Anki note.
 - Supporting historical inline metadata placed on heading lines.
@@ -86,7 +87,7 @@ Important fields:
 - Metadata: `anki_note_id`, `anki_meta_line_idx`, `delete_requested`, `no_anki`
 - Content: `model_name`, `front_md`, `back_md`, `split_by_separator`
 
-`front_md` and `back_md` are internal semantic slots. They map to `Front` and `Back` for Basic, or `Text` and `Extra` for Cloze.
+`front_md` and `back_md` are internal semantic slots. They map to `Front` and `Back` for Basic, or `Text` and `Back Extra` for Cloze.
 
 ### 3.2 Rendered Records
 
@@ -96,7 +97,7 @@ Important fields:
 - `back_html`
 - `back_html_with_footer`
 - `model_name`
-- `anki_fields`, derived as `Front`/`Back` or `Text`/`Extra`
+- `anki_fields`, derived as `Front`/`Back` or `Text`/`Back Extra`
 - `media_files`
 - `warnings`
 - `obsidian_url`
@@ -167,12 +168,12 @@ Only `^anki-*` and `^noanki` are synchronization metadata. `^srs-*` and `^nosrs`
 - Inference is performed independently for each H4 block, so one file may mix Basic and Cloze notes.
 - The inference candidate is the H4 heading plus content above the first thematic break line (`---`, with surrounding whitespace allowed), or the entire body when no separator exists.
 - A candidate containing `{{cN::...}}`, where `N` is a positive integer, is Cloze. The optional `{{cN::text::hint}}` form is also recognized.
-- Cloze syntax below the separator belongs to Extra and does not affect inference.
+- Cloze syntax below the separator belongs to Back Extra and does not affect inference.
 - For Basic with a separator, the H4 and content above it map to `Front`; content below it maps to `Back`.
 - For Basic without a separator, the H4 maps to `Front`; the entire body maps to `Back`.
-- For Cloze with a separator, the H4 and content above it map to `Text`; content below it maps to `Extra`.
-- For Cloze without a separator, the H4 and entire body map to `Text`; authored `Extra` is empty.
-- The inferred type of an existing synchronized note must remain stable. A field mismatch is reported as an AnkiConnect failure rather than triggering implicit type migration.
+- For Cloze with a separator, the H4 and content above it map to `Text`; content below it maps to `Back Extra`.
+- For Cloze without a separator, the H4 and entire body map to `Text`; authored `Back Extra` is empty.
+- The inferred type of an existing synchronized note must remain stable. No implicit type migration is attempted; an intentional change requires a new note identity.
 
 ---
 
@@ -182,7 +183,7 @@ Only `^anki-*` and `^noanki` are synchronization metadata. `^srs-*` and `^nosrs`
 
 - `markdown-it-py` uses the `gfm-like` preset with raw HTML and line breaks enabled and automatic linkification disabled.
 - The two internal content slots are rendered separately.
-- The answer-side field (`Back` or `Extra`) receives an `open in Obsidian` source footer, including when authored Cloze Extra is empty.
+- The answer-side field (`Back` or `Back Extra`) receives an `open in Obsidian` source footer, including when authored Cloze Back Extra is empty.
 
 ### 5.2 Wiki Links
 
@@ -251,10 +252,12 @@ This keeps Markdown as the source of truth and prevents renderer-only changes fr
 
 ### 6.4 AnkiConnect Operations
 
+- Before any apply-mode write, validate every locally generated field map and call `modelFieldNames` for each model used in the run.
+- Require the exact ordered contracts `Basic` (`Front`, `Back`) and `Cloze` (`Text`, `Back Extra`); abort the run on any mismatch or query failure.
 - Load existing deck names with `deckNamesAndIds` in apply mode.
 - Create missing decks with `createDeck`.
 - Upload changed media with `storeMediaFile` before note synchronization.
-- ADD with `addNote`, using the inferred model and its fields: `Basic` with `Front`/`Back`, or `Cloze` with `Text`/`Extra`.
+- ADD with `addNote`, using the inferred model and its fields: `Basic` with `Front`/`Back`, or `Cloze` with `Text`/`Back Extra`.
 - UPDATE with `updateNoteFields`, using the same model-specific field mapping.
 - Move cards between decks with `notesInfo` and `changeDeck` when `deck_full` changes.
 - DELETE with `deleteNotes`.
@@ -292,10 +295,11 @@ Markdown writeback requires both:
 
 1. Parse all requested Markdown files.
 2. Route `^noanki`, deletion, and renderable notes.
-3. In apply mode, pre-upload changed media.
-4. Synchronize rendered payloads with `AnkiClient.sync(...)`.
-5. In apply mode with writeback enabled, update Markdown metadata and finalize source footers for new notes.
-6. Return `PipelineReport`.
+3. In apply mode, validate local field maps and live Anki model field contracts with read-only queries.
+4. In apply mode, pre-upload changed media.
+5. Synchronize rendered payloads with `AnkiClient.sync(...)`.
+6. In apply mode with writeback enabled, update Markdown metadata and finalize source footers for new notes.
+7. Return `PipelineReport`.
 
 `PipelineReport` aggregates `added`, `updated`, `deleted`, `skipped`, `failed`, `errors`, `markdown_writebacks`, and `dry_run_actions`.
 
@@ -336,19 +340,19 @@ Markdown writeback requires both:
 
 - `MarkdownProcessor`: parsing, parent hierarchy, Basic/Cloze inference, field splitting, metadata spacing, DEL/DELETE, noanki, and writeback helpers.
 - `HtmlRenderer`: model-specific fields, source URLs, wiki links and images, ambiguous media, math normalization, and fenced-code protection.
-- `AnkiClient`: model-specific add/update payloads, dry-run behavior, retries, media caching, add/update/skip/delete, deck moves, URL drift, and state changes.
+- `AnkiClient`: strict local/live model contract validation, model-specific add/update payloads, dry-run behavior, retries, media caching, add/update/skip/delete, deck moves, URL drift, and state changes.
 - CLI: defaults, option forwarding, the legacy hidden `--to-anki` alias, and rejection of the removed HTML mode.
 
 ### 10.2 Integration Tests
 
-- Parser and renderer behavior across Basic/Cloze mixtures, optional Cloze Extra, lists, tables, links, images, and math.
+- Parser and renderer behavior across Basic/Cloze mixtures, optional Cloze Back Extra, lists, tables, links, images, and math.
 - Pipeline behavior in temporary vaults, including writeback positions, multiple cards, multiple parent groups, noanki, deletion conflicts, and media failures.
 
 ### 10.3 Mock AnkiConnect E2E
 
 - File: `tests/e2e/test_mock_ankiconnect_flow.py`
 - Uses a local mock HTTP server and never touches a real Anki database.
-- Covers mixed Basic/Cloze addition, multiple cards per Cloze note, optional Extra, card-preserving updates, sibling-card deck moves, deletion, invalid type transitions, unchanged reruns, noanki persistence, media and math round trips, and blank-line robustness.
+- Covers strict model-contract preflight before writes, observed read-only AnkiConnect response shapes, mixed Basic/Cloze addition, multiple cards per Cloze note, optional Back Extra, card-preserving updates, sibling-card deck moves, deletion, strict mock rejection of invalid type transitions, unchanged reruns, noanki persistence, media and math round trips, and blank-line robustness.
 
 ---
 
@@ -364,8 +368,9 @@ Markdown writeback requires both:
 
 ## 12. Known Boundaries
 
-- Anki model names and fields are fixed to the built-in `Basic` (`Front`, `Back`) and `Cloze` (`Text`, `Extra`) contracts.
+- Anki model names and fields are fixed to the built-in `Basic` (`Front`, `Back`) and `Cloze` (`Text`, `Back Extra`) contracts.
 - Existing notes cannot transition between Basic and Cloze through synchronization.
+- Real AnkiConnect may silently ignore unknown fields. md2anki and its mock server intentionally reject non-exact outbound field maps before synchronization.
 - AnkiConnect requests use API version 6.
 - Synchronization metadata must use standalone lines and numeric note IDs.
 - Image resolution is limited to the configured asset root.
