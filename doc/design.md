@@ -22,6 +22,7 @@ md2anki synchronizes H4-based card blocks from Obsidian-style Markdown into Anki
 - Infer Basic or Cloze independently for each H4 block and map its Markdown into the corresponding Anki fields.
 - Render question and answer-side Markdown into HTML.
 - Normalize Obsidian wiki links, wiki images, and math delimiters.
+- Render Mermaid fenced blocks to static SVG media through the local Mermaid CLI.
 - Synchronize notes through AnkiConnect with ADD, UPDATE, DELETE, and SKIP behavior.
 - Validate exact built-in model field contracts through read-only AnkiConnect queries before any apply-mode writes.
 - Maintain `sync_state.json` for content, deck, source URL, and media tracking.
@@ -46,12 +47,13 @@ md2anki synchronizes H4-based card blocks from Obsidian-style Markdown into Anki
 
 ## 2. Architecture
 
-The system uses three focused components and one procedural orchestrator:
+The system uses four focused components and one procedural orchestrator:
 
 1. `MarkdownProcessor`: Markdown parsing and localized metadata writeback.
 2. `HtmlRenderer`: Markdown-to-HTML rendering and media collection.
-3. `AnkiClient`: AnkiConnect operations and sync-state management.
-4. `run_pipeline`: parse, route, render, sync, and writeback orchestration.
+3. `MermaidCliRenderer`: isolated `mmdc` process execution and SVG generation.
+4. `AnkiClient`: AnkiConnect operations and sync-state management.
+5. `run_pipeline`: parse, route, render, sync, and writeback orchestration.
 
 ### 2.1 Data Flow
 
@@ -108,6 +110,8 @@ Important fields:
 - `abs_path`
 - `base64_data`
 - `source_ref`
+
+Vault images carry an absolute source path. Generated Mermaid SVGs carry Base64 data directly and leave `abs_path` empty.
 
 ### 3.3 State File
 
@@ -219,6 +223,18 @@ Outside fenced code blocks:
 
 Fenced code is protected from math normalization. Anki's built-in MathJax renders the normalized delimiters.
 
+### 5.6 Mermaid
+
+- A fenced block whose language is exactly `mermaid` is detected from markdown-it tokens rather than regular-expression matching.
+- Mermaid blocks are protected before wiki-link and math transformations, so Mermaid syntax such as `[[subroutine]]` is not interpreted as an Obsidian link.
+- `MermaidCliRenderer` finds `mmdc` on `PATH` and invokes it with the neutral theme, a white background, and SVG output.
+- An installed Chrome, Edge, or Chromium is preferred when available. Otherwise Mermaid CLI selects its bundled Puppeteer browser.
+- The generated Anki media filename is `md2anki-mermaid-<sha256(source)>.svg`.
+- Equal Mermaid source is rendered once per pipeline run and reuses the same media filename across notes and fields.
+- The SVG bytes are Base64-encoded in `MediaItem` and uploaded through the existing `storeMediaFile` path.
+- Missing prerequisites, invalid Mermaid, timeouts, missing output, and empty output are rendering failures rather than warnings.
+- Normal non-Mermaid fenced blocks remain ordinary highlighted code and do not require `mmdc`.
+
 ---
 
 ## 6. Synchronization Semantics
@@ -249,6 +265,7 @@ The content hash is based on Markdown-derived semantics, not generated HTML or f
 - sorted media references in `filename:source_ref` form
 
 This keeps Markdown as the source of truth and prevents renderer-only changes from creating false content updates.
+Mermaid media names and source references are derived only from the Mermaid source. Generated SVG bytes and Mermaid CLI versions do not enter the content hash.
 
 ### 6.4 AnkiConnect Operations
 
@@ -279,7 +296,7 @@ Markdown writeback requires both:
 
 - After ADD, insert `^anki-<id>` below the corresponding H4.
 - After DELETE, remove the Anki ID metadata and insert one `^noanki` marker.
-- Normalize the metadata region to one blank line after the H4 and remove excess blank lines around deleted metadata.
+- Normalize deleted metadata to one blank line before and after the canonical `^noanki` marker.
 
 ### 7.3 Stability
 
@@ -294,7 +311,7 @@ Markdown writeback requires both:
 `run_pipeline(...)` follows this sequence:
 
 1. Parse all requested Markdown files.
-2. Route `^noanki`, deletion, and renderable notes.
+2. Route `^noanki`, deletion, and renderable notes. Abort before Anki writes when fail-fast rendering fails.
 3. In apply mode, validate local field maps and live Anki model field contracts with read-only queries.
 4. In apply mode, pre-upload changed media.
 5. Synchronize rendered payloads with `AnkiClient.sync(...)`.
@@ -306,6 +323,8 @@ Markdown writeback requires both:
 ---
 
 ## 9. CLI
+
+Node.js and `@mermaid-js/mermaid-cli` are external runtime prerequisites. `mmdc` must be available on `PATH` when a rendered note contains a Mermaid fence. Notes without Mermaid do not invoke or require the executable at runtime.
 
 ### 9.1 Entry Points
 
@@ -339,20 +358,20 @@ Markdown writeback requires both:
 ### 10.1 Unit Tests
 
 - `MarkdownProcessor`: parsing, parent hierarchy, Basic/Cloze inference, field splitting, metadata spacing, DEL/DELETE, noanki, and writeback helpers.
-- `HtmlRenderer`: model-specific fields, source URLs, wiki links and images, ambiguous media, math normalization, and fenced-code protection.
+- `HtmlRenderer`: model-specific fields, source URLs, wiki links and images, ambiguous media, math normalization, fenced-code protection, Mermaid SVG generation, cache reuse, and prerequisite failures.
 - `AnkiClient`: strict local/live model contract validation, model-specific add/update payloads, dry-run behavior, retries, media caching, add/update/skip/delete, deck moves, URL drift, and state changes.
 - CLI: defaults, option forwarding, the legacy hidden `--to-anki` alias, and rejection of the removed HTML mode.
 
 ### 10.2 Integration Tests
 
-- Parser and renderer behavior across Basic/Cloze mixtures, optional Cloze Back Extra, lists, tables, links, images, and math.
+- Parser and renderer behavior across Basic/Cloze mixtures, optional Cloze Back Extra, lists, tables, links, images, math, and Mermaid media.
 - Pipeline behavior in temporary vaults, including writeback positions, multiple cards, multiple parent groups, noanki, deletion conflicts, and media failures.
 
 ### 10.3 Mock AnkiConnect E2E
 
 - File: `tests/e2e/test_mock_ankiconnect_flow.py`
 - Uses a local mock HTTP server and never touches a real Anki database.
-- Covers strict model-contract preflight before writes, observed read-only AnkiConnect response shapes, mixed Basic/Cloze addition, multiple cards per Cloze note, optional Back Extra, card-preserving updates, sibling-card deck moves, deletion, strict mock rejection of invalid type transitions, unchanged reruns, noanki persistence, media and math round trips, and blank-line robustness.
+- Covers strict model-contract preflight before writes, observed read-only AnkiConnect response shapes, mixed Basic/Cloze addition, multiple cards per Cloze note, optional Back Extra, card-preserving updates, sibling-card deck moves, deletion, strict mock rejection of invalid type transitions, unchanged reruns, noanki persistence, image/MathJax/Mermaid media round trips, and blank-line robustness.
 
 ---
 
@@ -361,7 +380,7 @@ Markdown writeback requires both:
 - Fail-fast is enabled by default.
 - With `--no-fail-fast`, note-level failures are aggregated into `errors` and `failed`, and processing continues.
 - Warnings include YAML parse failures, missing images, and ambiguous image matches.
-- Failures include deletion without a note ID, AnkiConnect errors, missing decks or note types, and media-upload failures.
+- Failures include deletion without a note ID, Mermaid CLI/rendering errors, AnkiConnect errors, missing decks or note types, and media-upload failures.
 - A failed deck move keeps the previous deck in state so a later run can retry it.
 
 ---
@@ -375,6 +394,8 @@ Markdown writeback requires both:
 - Synchronization metadata must use standalone lines and numeric note IDs.
 - Image resolution is limited to the configured asset root.
 - Anki media uses global filenames; vault assets should use unique filenames to avoid unintended replacement.
+- Mermaid rendering requires the external `mmdc` executable and a browser supported by Mermaid CLI.
+- Mermaid SVGs use a fixed neutral theme and white background so they remain readable in both light and dark Anki themes.
 - Renderer or card-template changes do not participate in the Markdown content hash.
 - The tool does not manage card-template HTML, JavaScript, or CSS. `anki-card-style.css` is provided for manual installation.
 

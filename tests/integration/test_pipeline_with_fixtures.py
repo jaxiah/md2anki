@@ -1,7 +1,7 @@
 import json
 from pathlib import Path
 
-from md2anki import AnkiClient, run_pipeline
+from md2anki import AnkiClient, HtmlRenderError, run_pipeline
 
 
 def _make_client(tmp_path: Path, apply_changes: bool = True) -> AnkiClient:
@@ -12,6 +12,47 @@ def _make_client(tmp_path: Path, apply_changes: bool = True) -> AnkiClient:
     )
     client.apply_changes = apply_changes
     return client
+
+
+def test_mermaid_render_failure_stops_before_anki_writes(tmp_path: Path):
+    vault_root = tmp_path / "vault"
+    vault_root.mkdir(parents=True, exist_ok=True)
+    md_file = vault_root / "mermaid.md"
+    md_file.write_text(
+        """---
+ankideck: Diagrams
+---
+#### Broken diagram
+
+```mermaid
+graph TD
+A -->
+```
+""",
+        encoding="utf-8",
+    )
+
+    class FailingRenderer:
+        def render(self, note):
+            raise HtmlRenderError("invalid Mermaid syntax")
+
+    client = _make_client(tmp_path, apply_changes=True)
+    client.invoke = lambda action, **params: (_ for _ in ()).throw(
+        AssertionError(f"unexpected AnkiConnect call: {action}")
+    )
+
+    report = run_pipeline(
+        markdown_files=[md_file],
+        vault_root=vault_root,
+        vault_name="vault",
+        apply_anki_changes=True,
+        renderer=FailingRenderer(),
+        anki_client=client,
+    )
+
+    assert report.failed == 1
+    assert any("render failed" in error and "invalid Mermaid syntax" in error for error in report.errors)
+    assert "^anki-" not in md_file.read_text(encoding="utf-8")
 
 
 def test_pipeline_add_writeback_and_state_in_temp_vault(tmp_path: Path):

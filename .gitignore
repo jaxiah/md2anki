@@ -5,6 +5,7 @@ _parser_renderer_debug/
 .pytest_tmp/
 *egg-info/
 manual_vault/
+manual_mermaid_preview/
 .venv/
 .vscode/
 .claude/

@@ -381,3 +381,15 @@ img {
   height: auto;
   border-radius: 4px;
 }
+
+.md2anki-mermaid {
+  margin: 0.8em 0;
+  overflow-x: auto;
+  text-align: center;
+}
+
+.md2anki-mermaid img {
+  margin: 0 auto;
+  max-width: 100%;
+  background: #ffffff;
+}

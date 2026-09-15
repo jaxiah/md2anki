@@ -5,7 +5,7 @@ from pathlib import Path
 
 import requests
 
-from md2anki import run_pipeline
+from md2anki import MermaidCliRenderer, run_pipeline
 
 from mock_ankiconnect_server import MockAnkiConnectServer
 
@@ -474,6 +474,41 @@ def test_mixed_basic_and_cloze_create_correct_notes_and_cards(tmp_path: Path):
         assert len(no_extra_note["cards"]) == 1
 
         assert server.state.media["diagram.png"] == base64.b64encode(b"diagram").decode("ascii")
+
+
+def test_mermaid_svg_media_roundtrip_without_real_anki(tmp_path: Path, monkeypatch):
+    vault_root = tmp_path / "mock_vault"
+    vault_root.mkdir(parents=True, exist_ok=True)
+    source = "flowchart LR\nA[Markdown] --> B[SVG]\n"
+    (vault_root / "mermaid.md").write_text(
+        f"""---
+ankideck: md2ankiTest::Mermaid
+---
+
+#### Render a Mermaid diagram
+
+```mermaid
+{source}```
+""",
+        encoding="utf-8",
+    )
+    svg = b'<svg xmlns="http://www.w3.org/2000/svg"><text>mock Mermaid</text></svg>'
+    monkeypatch.setattr(MermaidCliRenderer, "render_svg", lambda self, diagram: svg)
+
+    with MockAnkiConnectServer() as server:
+        report = _run_apply(vault_root, server)
+
+        assert report.failed == 0
+        assert report.added == 1
+        assert len(server.state.media) == 1
+        filename, stored_data = next(iter(server.state.media.items()))
+        assert filename.startswith("md2anki-mermaid-")
+        assert filename.endswith(".svg")
+        assert stored_data == base64.b64encode(svg).decode("ascii")
+
+        note = next(iter(server.state.notes.values()))
+        assert f'<img src="{filename}" alt="Mermaid diagram">' in note["fields"]["Back"]
+        assert "language-mermaid" not in note["fields"]["Back"]
 
 
 def test_cloze_update_preserves_existing_cards_and_adds_new_ordinal(tmp_path: Path):

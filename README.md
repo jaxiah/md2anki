@@ -112,17 +112,33 @@ The `^anki-...` lines above are illustrative note IDs. Do not invent one for a n
 - **Strict model contracts:** apply mode verifies the exact Basic/Cloze field names through a read-only AnkiConnect query before making any writes.
 - **Deck hierarchy:** `ankideck` and the nearest parent heading map directly to nested Anki decks.
 - **One-click source return:** every Anki card includes an `open in Obsidian` footer that jumps back to the exact Markdown block.
-- **Rich rendering:** supports Markdown, tables, code blocks, math, wiki links, and `![[image.png|width]]` embeds.
+- **Rich rendering:** supports Markdown, tables, code blocks, math, Mermaid diagrams, wiki links, and `![[image.png|width]]` embeds.
 
 ## Install
 
 Requirements:
 
 - Python `>=3.10`
+- Node.js and the Mermaid CLI available as `mmdc`
 - Anki desktop
 - AnkiConnect add-on installed and available at `http://127.0.0.1:8765`
 - Anki's built-in `Basic` note type with `Front` and `Back` fields
 - Anki's built-in `Cloze` note type with `Text` and `Back Extra` fields
+
+Install the Mermaid CLI globally, then confirm that `mmdc` is on `PATH`:
+
+```bash
+npm install -g @mermaid-js/mermaid-cli
+mmdc --version
+```
+
+If npm reports that Puppeteer's install script was blocked, allow it explicitly:
+
+```bash
+npm install -g --allow-scripts=puppeteer @mermaid-js/mermaid-cli
+```
+
+`md2anki` uses an installed Chrome, Edge, or Chromium when available and otherwise lets Mermaid CLI use its bundled browser.
 
 Clone or download this repository, then install it from the repository directory:
 
@@ -185,6 +201,7 @@ Before apply mode creates decks, uploads media, or changes notes, it calls the r
 - `^anki-<id>` is standalone metadata immediately below the H4 heading; blank lines around it are allowed.
 - `^noanki` in the same metadata position skips the H4 block completely.
 - `![[image.png]]` and `![[image.png|900]]` load images from the configured asset root and upload them to Anki media.
+- A fenced `mermaid` block is rendered locally to SVG and uploaded as Anki media instead of being shown as source code.
 
 For example, an `ankideck` of `Engineering` under `### Pumps` syncs into `Engineering::Pumps`. If no H1/H2/H3 parent exists, the note stays directly in the frontmatter deck.
 
@@ -217,7 +234,18 @@ The generated answer-side field (`Back` or `Back Extra`) includes an `open in Ob
 
 ## Rendering
 
-`md2anki` renders standard Markdown, tables, fenced code blocks, inline and display math, Obsidian wiki links, and wiki images. Math delimiters are normalized for Anki's built-in MathJax support, and media files are uploaded through AnkiConnect.
+`md2anki` renders standard Markdown, tables, fenced code blocks, inline and display math, Mermaid diagrams, Obsidian wiki links, and wiki images. Math delimiters are normalized for Anki's built-in MathJax support, and media files are uploaded through AnkiConnect.
+
+Mermaid blocks use the normal Obsidian syntax:
+
+````markdown
+```mermaid
+flowchart LR
+    Markdown --> SVG --> Anki
+```
+````
+
+The Mermaid source is rendered by the local `mmdc` prerequisite into a neutral-theme SVG with a white background. Generated filenames are derived from the Mermaid source, so identical diagrams reuse the same Anki media file. A missing CLI, invalid diagram, timeout, or empty output fails rendering before any Anki write instead of silently syncing Mermaid source code.
 
 For the matching light/dark card presentation, copy [anki-card-style.css](anki-card-style.css) into the Styling section of both the Anki `Basic` and `Cloze` note types used by these cards. The stylesheet includes theme-aware `.cloze` colors.
 

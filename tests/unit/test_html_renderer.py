@@ -1,8 +1,12 @@
+import base64
 import os
+import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
-from md2anki import HtmlRenderer
+import pytest
+
+from md2anki import HtmlRenderer, MermaidCliRenderer, MermaidRenderError
 
 
 @dataclass
@@ -72,10 +76,24 @@ def _render_case(case_name: str, renderer: HtmlRenderer, note: FakeParsedNote):
     return rendered
 
 
-def _new_renderer(tmp_path: Path) -> HtmlRenderer:
+def _new_renderer(tmp_path: Path, mermaid_renderer=None) -> HtmlRenderer:
     vault_root = tmp_path / "vault"
     (vault_root / "assets").mkdir(parents=True, exist_ok=True)
-    return HtmlRenderer(vault_name="sample-notes", vault_root=vault_root, asset_root="assets")
+    return HtmlRenderer(
+        vault_name="sample-notes",
+        vault_root=vault_root,
+        asset_root="assets",
+        mermaid_renderer=mermaid_renderer,
+    )
+
+
+class FakeMermaidRenderer:
+    def __init__(self):
+        self.sources: list[str] = []
+
+    def render_svg(self, source: str) -> bytes:
+        self.sources.append(source)
+        return b'<svg xmlns="http://www.w3.org/2000/svg"><text>diagram</text></svg>'
 
 
 def test_footer_links_to_note_with_anki_id(tmp_path: Path):
@@ -245,6 +263,91 @@ def test_wiki_image_missing_adds_warning_and_placeholder(tmp_path: Path):
     assert "[Image Missing: missing.png]" in rendered.front_html
     assert any("Image missing: missing.png" in warning for warning in rendered.warnings)
     assert rendered.media_files == []
+
+
+def test_mermaid_fence_becomes_content_addressed_svg_media(tmp_path: Path):
+    mermaid = FakeMermaidRenderer()
+    renderer = _new_renderer(tmp_path, mermaid_renderer=mermaid)
+    source = "flowchart TD\n    Start[[Subroutine]] --> Done\n"
+    note = FakeParsedNote(
+        source_file="diagram.md",
+        front_md=f"Before\n\n```mermaid\n{source}```\n\nAfter",
+        back_md="ok",
+    )
+
+    rendered = _render_case("mermaid_to_svg", renderer, note)
+
+    assert mermaid.sources == [source]
+    assert '<div class="md2anki-mermaid"><img src="md2anki-mermaid-' in rendered.front_html
+    assert 'alt="Mermaid diagram">' in rendered.front_html
+    assert "language-mermaid" not in rendered.front_html
+    assert "Subroutine" not in rendered.front_html
+    assert len(rendered.media_files) == 1
+    media = rendered.media_files[0]
+    assert media.filename.startswith("md2anki-mermaid-")
+    assert media.filename.endswith(".svg")
+    assert media.abs_path == ""
+    assert media.source_ref.startswith("mermaid:")
+    assert base64.b64decode(media.base64_data).startswith(b"<svg")
+
+
+def test_identical_mermaid_blocks_share_render_cache_and_filename(tmp_path: Path):
+    mermaid = FakeMermaidRenderer()
+    renderer = _new_renderer(tmp_path, mermaid_renderer=mermaid)
+    block = "```mermaid\ngraph LR\nA --> B\n```"
+    note = FakeParsedNote(source_file="diagram.md", front_md=block, back_md=block)
+
+    rendered = renderer.render(note)
+
+    assert len(mermaid.sources) == 1
+    assert len(rendered.media_files) == 2
+    assert rendered.media_files[0].filename == rendered.media_files[1].filename
+
+
+def test_non_mermaid_fence_does_not_require_mermaid_cli(tmp_path: Path):
+    mermaid = FakeMermaidRenderer()
+    renderer = _new_renderer(tmp_path, mermaid_renderer=mermaid)
+    note = FakeParsedNote(
+        source_file="code.md",
+        front_md="```python\nprint('still code')\n```",
+        back_md="ok",
+    )
+
+    rendered = renderer.render(note)
+
+    assert mermaid.sources == []
+    assert '<code class="language-python">' in rendered.front_html
+
+
+def test_mermaid_cli_reports_actionable_missing_prerequisite(monkeypatch):
+    monkeypatch.setattr("md2anki.html_renderer.shutil.which", lambda executable: None)
+
+    with pytest.raises(MermaidRenderError, match="npm install -g @mermaid-js/mermaid-cli"):
+        MermaidCliRenderer().render_svg("graph TD\nA --> B\n")
+
+
+def test_mermaid_cli_uses_system_browser_and_reads_svg(tmp_path: Path, monkeypatch):
+    browser = tmp_path / "chrome.exe"
+    browser.write_bytes(b"browser")
+    captured_command: list[str] = []
+
+    def _which(executable: str):
+        return "C:/npm/mmdc.cmd" if executable == "mmdc" else None
+
+    def _run(command, **kwargs):
+        captured_command.extend(command)
+        output_path = Path(command[command.index("--output") + 1])
+        output_path.write_bytes(b"<svg>rendered</svg>")
+        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+    monkeypatch.setattr("md2anki.html_renderer.shutil.which", _which)
+    monkeypatch.setattr("md2anki.html_renderer.subprocess.run", _run)
+
+    result = MermaidCliRenderer(browser_executable=str(browser)).render_svg("graph TD\nA --> B\n")
+
+    assert result == b"<svg>rendered</svg>"
+    assert "--quiet" in captured_command
+    assert "--puppeteerConfigFile" in captured_command
 
 
 def test_math_delimiters_are_normalized_by_renderer(tmp_path: Path):

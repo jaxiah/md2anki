@@ -16,6 +16,8 @@
 ### A2. Environment
 
 - [ ] Python satisfies `>=3.10`.
+- [ ] Node.js is installed and `mmdc --version` succeeds.
+- [ ] Mermaid CLI can render a smoke-test SVG with its bundled browser or an installed Chrome, Edge, or Chromium.
 - [ ] Test dependencies are installed with `python -m pip install -e ".[test]"`.
 - [ ] Anki Desktop is installed for the real-vault smoke test.
 - [ ] AnkiConnect is enabled at the configured URL, normally `http://127.0.0.1:8765`.
@@ -54,6 +56,7 @@ Required result:
 - [ ] A model-field mismatch aborts before `createDeck`, `storeMediaFile`, `addNote`, or `updateNoteFields`.
 - [ ] A successful delete leaves `^noanki` and removes the deleted note from state.
 - [ ] Media and source-footer behavior remain covered.
+- [ ] Mermaid source becomes uploaded SVG media, and the mock never receives it as a source-code block.
 - [ ] The test does not connect to or modify a real Anki database.
 
 ---
@@ -87,7 +90,7 @@ md2anki --vault-root <VAULT_ROOT> --file <RELATIVE_FILE> --apply-anki-changes
 - [ ] A Cloze block without `---` keeps its full body in Text and still receives the source footer in Back Extra.
 - [ ] `^anki-<id>` is written below the correct H4.
 - [ ] The `open in Obsidian` footer opens the exact H4 block.
-- [ ] Images, code blocks, and math render correctly.
+- [ ] Images, code blocks, math, and Mermaid diagrams render correctly.
 - [ ] A content edit updates the existing note rather than adding another note.
 - [ ] A second unchanged run skips the note.
 
@@ -95,7 +98,7 @@ md2anki --vault-root <VAULT_ROOT> --file <RELATIVE_FILE> --apply-anki-changes
 
 - [ ] `^anki-<id> DEL` deletes the intended Anki note.
 - [ ] Successful deletion replaces ID metadata with one `^noanki` marker.
-- [ ] The resulting Markdown has no extra metadata blank lines.
+- [ ] The resulting Markdown has one blank line before and after the canonical `^noanki` marker.
 - [ ] A later run does not recreate a `^noanki` block.
 
 ### B4. Full Apply
@@ -123,7 +126,7 @@ md2anki --vault-root <VAULT_ROOT> --apply-anki-changes
 
 ### C2. Quick Regression Check
 
-- [ ] Inspect Basic and Cloze notes for field rendering, source links, images, code blocks, math, and theme-aware cloze styling.
+- [ ] Inspect Basic and Cloze notes for field rendering, source links, images, code blocks, math, Mermaid SVGs, and theme-aware cloze styling.
 - [ ] Confirm that DELETE does not cause automatic re-addition.
 - [ ] Confirm that installation from a fresh checkout exposes both `md2anki` and `python -m md2anki`.
 
@@ -156,7 +159,15 @@ Check, in order:
 - Run apply on one file and confirm that existing `^anki-*` notes are updated instead of duplicated.
 - Continue with a full apply only after the small verification succeeds.
 
-### D4. Inspect Detailed Progress
+### D4. Mermaid Does Not Render
+
+- Confirm that `mmdc --version` succeeds in the same shell that runs md2anki.
+- Run a standalone `mmdc --input <diagram.mmd> --output <diagram.svg>` smoke test.
+- If npm blocked Puppeteer's install script, reinstall with `npm install -g --allow-scripts=puppeteer @mermaid-js/mermaid-cli`.
+- Confirm that Chrome, Edge, Chromium, or Mermaid CLI's bundled browser can launch.
+- Rerun md2anki with `--verbose` to inspect the Mermaid CLI error.
+
+### D5. Inspect Detailed Progress
 
 Rerun the same command with `--verbose` to replace the compact progress bar with per-file, per-media, and per-note status lines.
 

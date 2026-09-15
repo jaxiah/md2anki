@@ -4,7 +4,7 @@ from types import SimpleNamespace
 from typing import Any, Callable
 
 from .anki_client import AnkiClient
-from .html_renderer import HtmlRenderer
+from .html_renderer import HtmlRenderError, HtmlRenderer
 from .markdown_processor import MarkdownProcessor
 
 
@@ -109,7 +109,16 @@ def run_pipeline(
                 )
                 continue
 
-            rendered = renderer.render(note)
+            try:
+                rendered = renderer.render(note)
+            except HtmlRenderError as exc:
+                report.failed += 1
+                report.errors.append(
+                    f"render failed for {note.source_file} ({note.h4_heading_pure}): {exc}"
+                )
+                if fail_fast:
+                    return report
+                continue
             if rendered.warnings:
                 report.errors.extend(rendered.warnings)
             rendered_payloads.append(rendered)
@@ -234,7 +243,16 @@ def run_pipeline(
 
                 parsed = rendered.parsed
                 setattr(parsed, "anki_note_id", note_id)
-                finalized_rendered = renderer.render(parsed)
+                try:
+                    finalized_rendered = renderer.render(parsed)
+                except HtmlRenderError as exc:
+                    report.failed += 1
+                    report.errors.append(
+                        f"footer render failed for ^anki-{note_id}: {exc}"
+                    )
+                    if fail_fast:
+                        break
+                    continue
                 success, err = anki_client.finalize_added_note_url(note_id, finalized_rendered)
                 if not success:
                     report.failed += 1

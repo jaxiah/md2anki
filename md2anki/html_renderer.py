@@ -1,6 +1,12 @@
 import base64
+import hashlib
 import html
+import json
+import os
 import re
+import shutil
+import subprocess
+import tempfile
 import urllib.parse
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -13,6 +19,127 @@ RE_WIKI_IMAGE = re.compile(r"!\[\[([^\]|]+)(?:\|([^\]]+))?\]\]")
 RE_FENCED_CODE_BLOCK = re.compile(r"```.*?```", re.DOTALL)
 RE_DISPLAY_MATH = re.compile(r"\$\$(.+?)\$\$", re.DOTALL)
 RE_INLINE_MATH = re.compile(r"(?<!\\)\$(?!\$)([^$\n]+?)(?<!\\)\$(?!\$)")
+
+
+class HtmlRenderError(RuntimeError):
+    """Raised when authored Markdown cannot be rendered safely for Anki."""
+
+
+class MermaidRenderError(HtmlRenderError):
+    """Raised when a Mermaid block cannot be converted to SVG."""
+
+
+class MermaidCliRenderer:
+    """Render Mermaid source to SVG with the external `mmdc` executable."""
+
+    def __init__(
+        self,
+        executable: str = "mmdc",
+        timeout_seconds: float = 60.0,
+        browser_executable: str | None = None,
+    ):
+        self.executable = executable
+        self.timeout_seconds = timeout_seconds
+        self.browser_executable = browser_executable
+
+    def render_svg(self, source: str) -> bytes:
+        executable = shutil.which(self.executable)
+        if executable is None:
+            raise MermaidRenderError(
+                "Mermaid CLI executable 'mmdc' was not found on PATH; "
+                "install it with: npm install -g @mermaid-js/mermaid-cli"
+            )
+
+        with tempfile.TemporaryDirectory(prefix="md2anki-mermaid-") as temp_dir:
+            input_path = Path(temp_dir) / "diagram.mmd"
+            output_path = Path(temp_dir) / "diagram.svg"
+            input_path.write_text(source, encoding="utf-8")
+            command = [
+                executable,
+                "--input",
+                str(input_path),
+                "--output",
+                str(output_path),
+                "--theme",
+                "neutral",
+                "--backgroundColor",
+                "white",
+                "--quiet",
+            ]
+            browser_executable = self._resolve_browser_executable()
+            if browser_executable is not None:
+                puppeteer_config_path = Path(temp_dir) / "puppeteer.json"
+                puppeteer_config_path.write_text(
+                    json.dumps({"executablePath": browser_executable}),
+                    encoding="utf-8",
+                )
+                command.extend(["--puppeteerConfigFile", str(puppeteer_config_path)])
+
+            try:
+                completed = subprocess.run(
+                    command,
+                    capture_output=True,
+                    text=True,
+                    timeout=self.timeout_seconds,
+                    check=False,
+                )
+            except subprocess.TimeoutExpired as exc:
+                raise MermaidRenderError(
+                    f"Mermaid CLI timed out after {self.timeout_seconds:g} seconds"
+                ) from exc
+            except OSError as exc:
+                raise MermaidRenderError(f"Mermaid CLI could not be started: {exc}") from exc
+
+            if completed.returncode != 0:
+                details = (completed.stderr or completed.stdout or "unknown error").strip()
+                raise MermaidRenderError(f"Mermaid CLI failed: {details}")
+            if not output_path.is_file():
+                raise MermaidRenderError("Mermaid CLI completed without producing an SVG file")
+
+            svg = output_path.read_bytes()
+            if not svg.strip():
+                raise MermaidRenderError("Mermaid CLI produced an empty SVG file")
+            return svg
+
+    def _resolve_browser_executable(self) -> str | None:
+        if self.browser_executable:
+            explicit = shutil.which(self.browser_executable)
+            if explicit is None and Path(self.browser_executable).is_file():
+                explicit = str(Path(self.browser_executable).absolute())
+            if explicit is None:
+                raise MermaidRenderError(
+                    f"configured Mermaid browser executable was not found: {self.browser_executable}"
+                )
+            return explicit
+
+        candidates: list[Path] = []
+        if os.name == "nt":
+            for root, relative in [
+                (os.getenv("PROGRAMFILES"), "Google/Chrome/Application/chrome.exe"),
+                (os.getenv("PROGRAMFILES(X86)"), "Google/Chrome/Application/chrome.exe"),
+                (os.getenv("LOCALAPPDATA"), "Google/Chrome/Application/chrome.exe"),
+                (os.getenv("PROGRAMFILES"), "Microsoft/Edge/Application/msedge.exe"),
+                (os.getenv("PROGRAMFILES(X86)"), "Microsoft/Edge/Application/msedge.exe"),
+            ]:
+                if root:
+                    candidates.append(Path(root) / relative)
+        elif os.name == "posix":
+            candidates.extend(
+                [
+                    Path("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"),
+                    Path("/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge"),
+                ]
+            )
+
+        for candidate in candidates:
+            if candidate.is_file():
+                return str(candidate)
+
+        for command in ["google-chrome", "google-chrome-stable", "chromium", "chromium-browser", "microsoft-edge"]:
+            resolved = shutil.which(command)
+            if resolved:
+                return resolved
+        return None
 
 
 @dataclass
@@ -46,11 +173,19 @@ class RenderedNote:
 class HtmlRenderer:
     """将 ParsedNote 渲染为 HTML，并收集媒体上传所需的 payload。"""
 
-    def __init__(self, vault_name: str, vault_root: Path, asset_root: str = "assets"):
+    def __init__(
+        self,
+        vault_name: str,
+        vault_root: Path,
+        asset_root: str = "assets",
+        mermaid_renderer: MermaidCliRenderer | None = None,
+    ):
         self.vault_name = vault_name
         self.vault_root = Path(vault_root).absolute()
         self.asset_root = asset_root
         self.assets_dir = self.vault_root / asset_root
+        self.mermaid_renderer = mermaid_renderer or MermaidCliRenderer()
+        self._mermaid_cache: dict[str, MediaItem] = {}
         self.md = MarkdownIt("gfm-like", {"html": True, "breaks": True, "linkify": False})
 
     def render(self, note) -> RenderedNote:
@@ -80,9 +215,11 @@ class HtmlRenderer:
         )
 
     def _render_markdown(self, text: str) -> tuple[str, list[MediaItem], list[str]]:
-        # 先处理 wiki image，再处理 wiki link，最后交给 markdown-it 转 HTML。
+        # Mermaid must be protected before wiki-link replacement because its own
+        # node syntax may contain double square brackets.
         warnings: list[str] = []
-        media_payloads: list[MediaItem] = []
+        text_with_mermaid_tokens, mermaid_html, mermaid_media = self._protect_mermaid_blocks(text)
+        media_payloads: list[MediaItem] = list(mermaid_media)
 
         def replace_image(match: re.Match) -> str:
             img_ref = match.group(1).strip()
@@ -116,7 +253,7 @@ class HtmlRenderer:
                 warnings.append(f"Image read error: {img_ref} ({exc})")
                 return f"[Image Error: {img_ref}]"
 
-        text_with_images = RE_WIKI_IMAGE.sub(replace_image, text)
+        text_with_images = RE_WIKI_IMAGE.sub(replace_image, text_with_mermaid_tokens)
 
         def replace_link(match: re.Match) -> str:
             target = match.group(1).strip()
@@ -129,7 +266,60 @@ class HtmlRenderer:
         text_normalized_math = self._normalize_math_delimiters(text_with_display_tokens)
         html_content = self.md.render(text_normalized_math)
         html_content = self._restore_display_math_blocks(html_content, display_math_map)
+        html_content = self._restore_mermaid_blocks(html_content, mermaid_html)
         return html_content, media_payloads, warnings
+
+    def _protect_mermaid_blocks(self, text: str) -> tuple[str, dict[str, str], list[MediaItem]]:
+        tokens = self.md.parse(text)
+        lines = text.splitlines(keepends=True)
+        replacements: list[tuple[int, int, str]] = []
+        mermaid_html: dict[str, str] = {}
+        media_items: list[MediaItem] = []
+
+        for index, token in enumerate(tokens):
+            if token.type != "fence" or token.map is None:
+                continue
+            language = token.info.strip().split(maxsplit=1)[0].lower() if token.info.strip() else ""
+            if language != "mermaid":
+                continue
+
+            media = self._render_mermaid_media(token.content)
+            placeholder = f"MD2ANKI_MERMAID_{index}_{media.filename.removesuffix('.svg')}"
+            mermaid_html[placeholder] = (
+                '<div class="md2anki-mermaid">'
+                f'<img src="{media.filename}" alt="Mermaid diagram">'
+                "</div>"
+            )
+            media_items.append(media)
+            replacements.append((token.map[0], token.map[1], placeholder))
+
+        for start_line, end_line, placeholder in reversed(replacements):
+            lines[start_line:end_line] = [f"{placeholder}\n"]
+
+        return "".join(lines), mermaid_html, media_items
+
+    def _render_mermaid_media(self, source: str) -> MediaItem:
+        digest = hashlib.sha256(source.encode("utf-8")).hexdigest()
+        cached = self._mermaid_cache.get(digest)
+        if cached is not None:
+            return cached
+
+        svg = self.mermaid_renderer.render_svg(source)
+        media = MediaItem(
+            filename=f"md2anki-mermaid-{digest}.svg",
+            abs_path="",
+            base64_data=base64.b64encode(svg).decode("ascii"),
+            source_ref=f"mermaid:{digest}",
+        )
+        self._mermaid_cache[digest] = media
+        return media
+
+    @staticmethod
+    def _restore_mermaid_blocks(html_content: str, mermaid_html: dict[str, str]) -> str:
+        for placeholder, replacement in mermaid_html.items():
+            html_content = html_content.replace(f"<p>{placeholder}</p>\n", f"{replacement}\n")
+            html_content = html_content.replace(f"<p>{placeholder}</p>", replacement)
+        return html_content
 
     def _protect_display_math_blocks(self, text: str) -> tuple[str, dict[str, str]]:
         # 对显示公式做 token 保护，避免 markdown-it 改写 LaTeX 反斜杠。
