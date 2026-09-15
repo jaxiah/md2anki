@@ -212,14 +212,16 @@ class _Handler(BaseHTTPRequestHandler):
             return state.add_deck(deck)
 
         if action == "storeMediaFile":
-            filename = params["filename"]
+            # Anki 26.09 lowercases newly-added media names and returns the
+            # actual name. Older Anki versions return the requested name.
+            filename = params["filename"].lower()
             if params.get("data") is not None:
                 state.media[filename] = params["data"]
             elif params.get("path") is not None:
                 state.media[filename] = base64.b64encode(Path(params["path"]).read_bytes()).decode("ascii")
             else:
                 state.media[filename] = ""
-            return None
+            return filename
 
         if action == "retrieveMediaFile":
             return state.media.get(params["filename"], False)

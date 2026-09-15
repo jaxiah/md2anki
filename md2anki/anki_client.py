@@ -1,4 +1,5 @@
 import hashlib
+import html
 import json
 import time
 from dataclasses import dataclass, field
@@ -67,6 +68,9 @@ class AnkiClient:
         self.deck_cache = self.load_deck_cache()
         # filename → content fingerprint；在进程间和跨进程两个维度去重。
         self._uploaded_media: dict[str, str] = dict(self.state.get("uploaded_media", {}))
+        # Anki may normalize a requested media filename. Keep the returned names
+        # only for the current run; persistent upload decisions remain fingerprint-based.
+        self._media_names_this_run: dict[tuple[str, str], str] = {}
 
     def is_dry_run(self) -> bool:
         return not self.apply_changes
@@ -293,35 +297,83 @@ class AnkiClient:
             return False
         return bool(result)
 
-    def _store_media(self, media: Any) -> tuple[bool, str | None, str]:
+    def _store_media(self, media: Any) -> tuple[bool, str | None, str, str | None]:
         filename = getattr(media, "filename", None)
         if not filename:
-            return False, "missing media filename", "failed"
+            return False, "missing media filename", "failed", None
 
         path_error: Any = None
         abs_path = getattr(media, "abs_path", None)
         if abs_path:
             ok, result = self.invoke("storeMediaFile", filename=filename, path=abs_path)
             if ok:
-                return True, None, "uploaded(path)"
+                stored_filename = result if isinstance(result, str) and result else filename
+                return True, None, "uploaded(path)", stored_filename
             path_error = result
             if self._looks_like_timeout(result) and self._verify_media_uploaded(filename):
-                return True, None, "uploaded(verified)"
+                return True, None, "uploaded(verified)", filename
 
         data_payload = getattr(media, "base64_data", None)
         if data_payload:
             ok, result = self.invoke("storeMediaFile", filename=filename, data=data_payload)
             if ok:
-                return True, None, "uploaded(data)"
+                stored_filename = result if isinstance(result, str) and result else filename
+                return True, None, "uploaded(data)", stored_filename
             if self._looks_like_timeout(result) and self._verify_media_uploaded(filename):
-                return True, None, "uploaded(verified)"
+                return True, None, "uploaded(verified)", filename
             if path_error is not None:
-                return False, f"path={path_error}; data={result}", "failed"
-            return False, str(result), "failed"
+                return False, f"path={path_error}; data={result}", "failed", None
+            return False, str(result), "failed", None
 
         if path_error is not None:
-            return False, str(path_error), "failed"
-        return False, "missing media path and base64 payload", "failed"
+            return False, str(path_error), "failed", None
+        return False, "missing media path and base64 payload", "failed", None
+
+    @staticmethod
+    def _replace_media_src(rendered: Any, requested: str, stored: str) -> None:
+        if requested == stored:
+            return
+        requested_html = html.escape(requested, quote=True)
+        stored_html = html.escape(stored, quote=True)
+        for attr in ("front_html", "back_html", "back_html_with_footer"):
+            value = getattr(rendered, attr, None)
+            if not isinstance(value, str):
+                continue
+            value = value.replace(f'src="{requested_html}"', f'src="{stored_html}"')
+            value = value.replace(f"src='{requested_html}'", f"src='{stored_html}'")
+            setattr(rendered, attr, value)
+
+    def _remember_media_name(self, media: Any, stored_filename: str) -> None:
+        requested = getattr(media, "filename", "")
+        fingerprint = self._compute_media_fingerprint(media)
+        self._media_names_this_run[(requested, fingerprint)] = stored_filename
+
+    def apply_media_names_from_current_run(self, rendered: Any) -> None:
+        for media in getattr(rendered, "media_files", []):
+            requested = getattr(media, "filename", "")
+            fingerprint = self._compute_media_fingerprint(media)
+            stored = self._media_names_this_run.get((requested, fingerprint))
+            if stored:
+                self._replace_media_src(rendered, requested, stored)
+
+    def _prepare_rendered_media(self, rendered: Any) -> tuple[bool, str | None, bool]:
+        """Store all media for a note that will be written, then rewrite its HTML."""
+        state_changed = False
+        for media in getattr(rendered, "media_files", []):
+            requested = getattr(media, "filename", "")
+            fingerprint = self._compute_media_fingerprint(media)
+            key = (requested, fingerprint)
+            stored = self._media_names_this_run.get(key)
+            if stored is None:
+                media_ok, media_err, _, stored = self._store_media(media)
+                if not media_ok or stored is None:
+                    return False, f"storeMediaFile failed for {requested}: {media_err}", state_changed
+                self._media_names_this_run[key] = stored
+                if fingerprint:
+                    self._uploaded_media[requested] = fingerprint
+                    state_changed = True
+            self._replace_media_src(rendered, requested, stored)
+        return True, None, state_changed
 
     def _collect_unique_media(self, rendered_notes) -> list[Any]:
         unique_media: list[Any] = []
@@ -351,7 +403,7 @@ class AnkiClient:
                 continue
 
             result.attempted += 1
-            media_ok, media_err, media_status = self._store_media(media)
+            media_ok, media_err, media_status, stored_filename = self._store_media(media)
             if not media_ok:
                 result.failed += 1
                 result.errors.append(f"storeMediaFile failed for {media.filename}: {media_err}")
@@ -361,6 +413,13 @@ class AnkiClient:
                     break
                 continue
 
+            if stored_filename is not None:
+                self._remember_media_name(media, stored_filename)
+                if stored_filename != media.filename:
+                    for rendered in rendered_notes:
+                        if any(item.filename == media.filename for item in getattr(rendered, "media_files", [])):
+                            self._replace_media_src(rendered, media.filename, stored_filename)
+                            setattr(rendered, "_media_filename_changed", True)
             if fingerprint:
                 self._uploaded_media[media.filename] = fingerprint
             result.uploaded += 1
@@ -371,7 +430,7 @@ class AnkiClient:
             self.save_state()
         return result
 
-    def sync(self, rendered_notes, progress_callback=None, skip_media_upload: bool = False):
+    def sync(self, rendered_notes, progress_callback=None):
         # 单条失败不终止全局；统一聚合到 SyncResult。
         result = SyncResult()
         items = self.state.setdefault("items", {})
@@ -455,8 +514,9 @@ class AnkiClient:
 
                 deck_changed = deck_in_state != new_deck_check
                 url_changed = url_in_state != url_new
+                media_filename_changed = bool(getattr(rendered, "_media_filename_changed", False))
 
-                if not deck_changed and not url_changed:
+                if not deck_changed and not url_changed and not media_filename_changed:
                     # 内容、deck、URL 均未变化，完全跳过。
                     result.skipped += 1
                     if progress_callback:
@@ -464,10 +524,10 @@ class AnkiClient:
                     continue
 
                 if self.is_dry_run():
-                    if url_changed:
+                    if url_changed or media_filename_changed:
                         result.dry_run_actions.append(
                             {
-                                "action": "would_update_url",
+                                "action": "would_update_url" if url_changed else "would_update_fields",
                                 "anki_note_id": note_id,
                                 "source_file": getattr(parsed, "source_file", None),
                                 "line_idx_h4": getattr(parsed, "line_idx_h4", None),
@@ -496,8 +556,18 @@ class AnkiClient:
                             progress_callback("sync", index, total_notes, getattr(parsed, "h4_heading_pure", None), "would_move_deck")
                     continue
 
-                # URL 漂移：需要重新将带正确 footer 的 HTML 发送到 Anki。
-                if url_changed:
+                # URL or Anki-normalized media name changed: rewrite note fields.
+                if url_changed or media_filename_changed:
+                    media_ok, media_err, media_state_changed = self._prepare_rendered_media(rendered)
+                    state_changed = state_changed or media_state_changed
+                    if not media_ok:
+                        result.failed += 1
+                        result.errors.append(f"media preparation failed for ^anki-{note_id}: {media_err}")
+                        if progress_callback:
+                            progress_callback("sync", index, total_notes, getattr(parsed, "h4_heading_pure", None), "media_failed")
+                        if self.fail_fast:
+                            break
+                        continue
                     update_ok, update_err = self.update_note_fields(
                         note_id=note_id,
                         fields=rendered.anki_fields,
@@ -519,7 +589,7 @@ class AnkiClient:
                     if move_ok:
                         items[note_id]["deck_full"] = new_deck_check
                         state_changed = True
-                        if not url_changed:
+                        if not (url_changed or media_filename_changed):
                             result.updated += 1
                             if progress_callback:
                                 progress_callback("sync", index, total_notes, getattr(parsed, "h4_heading_pure", None), "deck_moved")
@@ -527,13 +597,14 @@ class AnkiClient:
                         result.errors.append(
                             f"changeDeck failed for ^anki-{note_id} ({deck_in_state!r} \u2192 {new_deck_check!r}): {move_err}"
                         )
-                        if not url_changed:
+                        if not (url_changed or media_filename_changed):
                             if progress_callback:
                                 progress_callback("sync", index, total_notes, getattr(parsed, "h4_heading_pure", None), "deck_move_failed")
-                if url_changed:
+                if url_changed or media_filename_changed:
                     result.updated += 1
                     if progress_callback:
-                        progress_callback("sync", index, total_notes, getattr(parsed, "h4_heading_pure", None), "url_updated")
+                        status = "url_updated" if url_changed else "media_name_updated"
+                        progress_callback("sync", index, total_notes, getattr(parsed, "h4_heading_pure", None), status)
                 continue
 
             if self.is_dry_run():
@@ -565,28 +636,16 @@ class AnkiClient:
                     break
                 continue
 
-            if not skip_media_upload:
-                media_failed = False
-                for media in rendered.media_files:
-                    # 媒体任一失败则该 note 终止，避免字段与媒体不一致。
-                    fingerprint = self._compute_media_fingerprint(media)
-                    if fingerprint and self._uploaded_media.get(media.filename) == fingerprint:
-                        continue
-                    media_ok, media_err, _ = self._store_media(media)
-                    if not media_ok:
-                        result.failed += 1
-                        result.errors.append(f"storeMediaFile failed for {media.filename}: {media_err}")
-                        media_failed = True
-                        break
-                    if fingerprint:
-                        self._uploaded_media[media.filename] = fingerprint
-                    state_changed = True
-                if media_failed:
-                    if progress_callback:
-                        progress_callback("sync", index, total_notes, getattr(parsed, "h4_heading_pure", None), "media_failed")
-                    if self.fail_fast:
-                        break
-                    continue
+            media_ok, media_err, media_state_changed = self._prepare_rendered_media(rendered)
+            state_changed = state_changed or media_state_changed
+            if not media_ok:
+                result.failed += 1
+                result.errors.append(str(media_err))
+                if progress_callback:
+                    progress_callback("sync", index, total_notes, getattr(parsed, "h4_heading_pure", None), "media_failed")
+                if self.fail_fast:
+                    break
+                continue
 
             if note_id:
                 update_ok, update_err = self.update_note_fields(

@@ -164,6 +164,34 @@ def test_sync_add_creates_note_and_state(tmp_path: Path):
     assert add_payload["fields"] == {"Front": "<p>F</p>", "Back": "<p>B</p>"}
 
 
+def test_sync_uses_unchanged_media_name_returned_by_older_anki(tmp_path: Path):
+    client = _new_client(tmp_path, apply_changes=True)
+    add_payload: dict = {}
+    media_name = "Pasted image.png"
+
+    def _invoke(action, **params):
+        if action == "createDeck":
+            return True, None
+        if action == "storeMediaFile":
+            return True, params["filename"]
+        if action == "addNote":
+            add_payload.update(params["note"])
+            return True, 322
+        raise AssertionError(f"unexpected action: {action}")
+
+    client.invoke = _invoke
+    note = FakeRendered(
+        parsed=FakeParsed(),
+        front_html=f'<img src="{media_name}">',
+        media_files=[FakeMedia(filename=media_name, source_ref=media_name)],
+    )
+
+    result = client.sync([note])
+
+    assert result.added == 1
+    assert add_payload["fields"]["Front"] == f'<img src="{media_name}">'
+
+
 def test_sync_add_uses_builtin_cloze_model_and_fields(tmp_path: Path):
     client = _new_client(tmp_path, apply_changes=True)
     add_payload = {}
@@ -427,7 +455,7 @@ def test_prewarm_then_sync_skips_store_media(tmp_path: Path):
     note = FakeRendered(parsed=FakeParsed(), media_files=[media])
 
     prewarm = client.prewarm_media([note])
-    result = client.sync([note], skip_media_upload=True)
+    result = client.sync([note])
 
     assert prewarm.uploaded == 1
     assert prewarm.failed == 0

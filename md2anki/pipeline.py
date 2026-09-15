@@ -139,7 +139,6 @@ def run_pipeline(
     sync_result = anki_client.sync(
         rendered_payloads,
         progress_callback=_emit_progress,
-        skip_media_upload=apply_anki_changes,
     )
 
     report.added += sync_result.added
@@ -253,6 +252,7 @@ def run_pipeline(
                     if fail_fast:
                         break
                     continue
+                anki_client.apply_media_names_from_current_run(finalized_rendered)
                 success, err = anki_client.finalize_added_note_url(note_id, finalized_rendered)
                 if not success:
                     report.failed += 1

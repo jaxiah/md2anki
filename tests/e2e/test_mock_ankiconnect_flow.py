@@ -420,6 +420,55 @@ def test_media_link_table_math_roundtrip(tmp_path: Path):
         assert {"diagram.png", "plot.png", "dup.png"}.issubset(server.state.media)
 
 
+def test_anki_normalized_media_name_is_used_without_persistent_mapping(tmp_path: Path):
+    vault_root = tmp_path / "mock_vault"
+    assets = vault_root / "assets"
+    assets.mkdir(parents=True)
+    media_name = "Pasted image 20260915064330.png"
+    (assets / media_name).write_bytes(b"image-data")
+    note_file = vault_root / "case-sensitive-media.md"
+    note_file.write_text(
+        f"""---
+ankideck: md2ankiTest::MediaCase
+---
+
+#### Preserve Anki's actual media name
+
+![[{media_name}|800]]
+""",
+        encoding="utf-8",
+    )
+
+    with MockAnkiConnectServer() as server:
+        first = _run_apply(vault_root, server)
+
+        assert first.failed == 0
+        assert first.added == 1
+        stored_name = media_name.lower()
+        assert stored_name in server.state.media
+        note = next(iter(server.state.notes.values()))
+        assert f'<img src="{stored_name}" width="800">' in note["fields"]["Back"]
+
+        state = json.loads((vault_root / "sync_state.json").read_text(encoding="utf-8"))
+        assert "stored_media_names" not in state
+        assert media_name in state["uploaded_media"]
+
+        note_file.write_text(
+            note_file.read_text(encoding="utf-8").replace(
+                "Preserve Anki's actual media name",
+                "Use Anki's actual media name after an update",
+            ),
+            encoding="utf-8",
+        )
+        second = _run_apply(vault_root, server)
+
+        assert second.failed == 0
+        assert second.updated == 1
+        assert server.state.action_count("storeMediaFile") == 2
+        note = next(iter(server.state.notes.values()))
+        assert f'<img src="{stored_name}" width="800">' in note["fields"]["Back"]
+
+
 def test_blank_lines_robustness(tmp_path: Path):
     vault_root = tmp_path / "mock_vault"
     _write_vault(vault_root)
