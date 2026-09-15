@@ -181,7 +181,7 @@ Process only one file, relative to the vault root:
 md2anki --vault-root D:/Notes/MyVault --file "Biology/cells.md" --apply-anki-changes
 ```
 
-By default, synchronization state is stored in `<vault-root>/sync_state.json`, and images are resolved under `<vault-root>/assets`. Override these locations with `--sync-state-file` and `--asset-root` when needed.
+Synchronization state is stored in `<vault-root>/.md2anki-cache/sync_state.json`, and images are resolved under `<vault-root>/assets`. Override the image location with `--asset-root` when needed.
 
 Before apply mode creates decks, uploads media, or changes notes, it calls the read-only AnkiConnect `modelFieldNames` action for every note type used in the run. A missing, renamed, reordered, or additional field aborts the run instead of allowing AnkiConnect to silently ignore an invalid payload.
 
@@ -245,7 +245,7 @@ flowchart LR
 ```
 ````
 
-The Mermaid source is rendered by the local `mmdc` prerequisite into a neutral-theme SVG with a white background. Generated filenames are derived from the Mermaid source, so identical diagrams reuse the same Anki media file. A missing CLI, invalid diagram, timeout, or empty output fails rendering before any Anki write instead of silently syncing Mermaid source code.
+The Mermaid source is rendered by the local `mmdc` prerequisite into a neutral-theme SVG with a white background. Generated filenames are derived from the Mermaid source, so identical diagrams reuse the same Anki media file. Rendered SVGs are cached directly in `<vault>/.md2anki-cache/mermaid/`; unchanged diagrams do not start `mmdc` again on later runs, and deleting only that `mermaid` directory forces regeneration. A missing CLI, invalid diagram, timeout, or empty output fails rendering before any Anki write instead of silently syncing Mermaid source code.
 
 For the matching light/dark card presentation, copy [anki-card-style.css](anki-card-style.css) into the Styling section of both the Anki `Basic` and `Cloze` note types used by these cards. The stylesheet includes theme-aware `.cloze` colors.
 
@@ -262,9 +262,9 @@ md2anki.cmd
 
 ## Safety
 
-Dry-run is the default command-line behavior. Only `--apply-anki-changes` writes to Anki, `sync_state.json`, or Markdown. Apply mode may insert `^anki-<id>` or replace deleted-note metadata with `^noanki`.
+Dry-run is the default command-line behavior. Only `--apply-anki-changes` writes to Anki, `.md2anki-cache/sync_state.json`, or Markdown. Apply mode may insert `^anki-<id>` or replace deleted-note metadata with `^noanki`.
 
-Use only IDs written back by `md2anki`; a hand-written `^anki-<id>` is interpreted as an existing Anki note. Keep `sync_state.json` with the vault, and back up both the vault and Anki before large migrations.
+Use only IDs written back by `md2anki`; a hand-written `^anki-<id>` is interpreted as an existing Anki note. Markdown and its `^anki-<id>` metadata remain the source of truth. Deleting `.md2anki-cache` does not delete Anki notes, but the next apply performs an expensive full synchronization and regenerates Mermaid SVGs.
 
 ## Development
 

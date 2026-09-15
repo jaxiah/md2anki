@@ -28,6 +28,7 @@ def test_cli_defaults_to_dry_run_and_collects_files(tmp_path: Path, monkeypatch)
     assert captured["write_back_markdown"] is True
     assert len(captured["markdown_files"]) == 2
     assert captured["vault_name"] == vault.name
+    assert captured["sync_state_file"] == vault / ".md2anki-cache" / "sync_state.json"
     assert captured["request_timeout_seconds"] == 30.0
     assert captured["max_retries"] == 2
     assert captured["retry_backoff_seconds"] == 0.75
@@ -97,6 +98,23 @@ def test_cli_rejects_removed_html_mode(tmp_path: Path):
 
     with pytest.raises(SystemExit) as exc_info:
         cli.main(["--vault-root", str(vault), "--to-html"])
+
+    assert exc_info.value.code == 2
+
+
+def test_cli_rejects_sync_state_path_override(tmp_path: Path):
+    vault = tmp_path / "vault"
+    vault.mkdir(parents=True, exist_ok=True)
+
+    with pytest.raises(SystemExit) as exc_info:
+        cli.main(
+            [
+                "--vault-root",
+                str(vault),
+                "--sync-state-file",
+                str(tmp_path / "custom-state.json"),
+            ]
+        )
 
     assert exc_info.value.code == 2
 

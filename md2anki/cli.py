@@ -58,11 +58,6 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--verbose", action="store_true", help="Print per-file and per-note progress details.")
     parser.add_argument(
-        "--sync-state-file",
-        default=None,
-        help="Sync state file path, default <vault_root>/sync_state.json",
-    )
-    parser.add_argument(
         "--file",
         dest="files",
         action="append",
@@ -90,7 +85,7 @@ def main(argv: list[str] | None = None) -> int:
 
     vault_root = Path(args.vault_root).absolute()
     vault_name = vault_root.name
-    sync_state_file = Path(args.sync_state_file).absolute() if args.sync_state_file else (vault_root / "sync_state.json")
+    sync_state_file = vault_root / ".md2anki-cache" / "sync_state.json"
     markdown_files = _collect_markdown_files(vault_root, args.files)
     progress = ProgressReporter(verbose=args.verbose)
 

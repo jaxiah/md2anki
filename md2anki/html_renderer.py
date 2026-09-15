@@ -32,17 +32,25 @@ class MermaidRenderError(HtmlRenderError):
 class MermaidCliRenderer:
     """Render Mermaid source to SVG with the external `mmdc` executable."""
 
+    CACHE_REVISION = "neutral-white"
+
     def __init__(
         self,
         executable: str = "mmdc",
         timeout_seconds: float = 60.0,
         browser_executable: str | None = None,
+        cache_dir: Path | None = None,
     ):
         self.executable = executable
         self.timeout_seconds = timeout_seconds
         self.browser_executable = browser_executable
+        self.cache_dir = Path(cache_dir) if cache_dir is not None else None
 
     def render_svg(self, source: str) -> bytes:
+        cached_svg = self._read_cached_svg(source)
+        if cached_svg is not None:
+            return cached_svg
+
         executable = shutil.which(self.executable)
         if executable is None:
             raise MermaidRenderError(
@@ -99,7 +107,52 @@ class MermaidCliRenderer:
             svg = output_path.read_bytes()
             if not svg.strip():
                 raise MermaidRenderError("Mermaid CLI produced an empty SVG file")
+            self._write_cached_svg(source, svg)
             return svg
+
+    def _cache_path(self, source: str) -> Path | None:
+        if self.cache_dir is None:
+            return None
+        cache_key = f"{self.CACHE_REVISION}\0{source}"
+        digest = hashlib.sha256(cache_key.encode("utf-8")).hexdigest()
+        return self.cache_dir / f"{digest}.svg"
+
+    def _read_cached_svg(self, source: str) -> bytes | None:
+        cache_path = self._cache_path(source)
+        if cache_path is None:
+            return None
+        try:
+            svg = cache_path.read_bytes()
+        except OSError:
+            return None
+        return svg if svg.strip() else None
+
+    def _write_cached_svg(self, source: str, svg: bytes) -> None:
+        cache_path = self._cache_path(source)
+        if cache_path is None:
+            return
+
+        temp_path: Path | None = None
+        try:
+            cache_path.parent.mkdir(parents=True, exist_ok=True)
+            with tempfile.NamedTemporaryFile(
+                mode="wb",
+                dir=cache_path.parent,
+                prefix=f".{cache_path.stem}-",
+                suffix=".tmp",
+                delete=False,
+            ) as temp_file:
+                temp_file.write(svg)
+                temp_path = Path(temp_file.name)
+            temp_path.replace(cache_path)
+        except OSError:
+            # Caching is an optimization; a read-only or unavailable cache must
+            # not turn a successful Mermaid render into a sync failure.
+            if temp_path is not None:
+                try:
+                    temp_path.unlink(missing_ok=True)
+                except OSError:
+                    pass
 
     def _resolve_browser_executable(self) -> str | None:
         if self.browser_executable:
@@ -184,7 +237,9 @@ class HtmlRenderer:
         self.vault_root = Path(vault_root).absolute()
         self.asset_root = asset_root
         self.assets_dir = self.vault_root / asset_root
-        self.mermaid_renderer = mermaid_renderer or MermaidCliRenderer()
+        self.mermaid_renderer = mermaid_renderer or MermaidCliRenderer(
+            cache_dir=self.vault_root / ".md2anki-cache" / "mermaid"
+        )
         self._mermaid_cache: dict[str, MediaItem] = {}
         self.md = MarkdownIt("gfm-like", {"html": True, "breaks": True, "linkify": False})
 

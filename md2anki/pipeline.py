@@ -43,7 +43,7 @@ def run_pipeline(
     """最小过程式编排：parse -> (route) -> render -> sync -> writeback。"""
 
     vault_root = Path(vault_root).absolute()
-    state_file = sync_state_file or (vault_root / "sync_state.json")
+    state_file = sync_state_file or (vault_root / ".md2anki-cache" / "sync_state.json")
 
     processor = processor or MarkdownProcessor(vault_root=vault_root)
     renderer = renderer or HtmlRenderer(vault_name=vault_name, vault_root=vault_root, asset_root=asset_root)

@@ -350,6 +350,32 @@ def test_mermaid_cli_uses_system_browser_and_reads_svg(tmp_path: Path, monkeypat
     assert "--puppeteerConfigFile" in captured_command
 
 
+def test_mermaid_cli_reuses_flat_persistent_svg_cache(tmp_path: Path, monkeypatch):
+    cache_dir = tmp_path / ".md2anki-cache" / "mermaid"
+    render_count = 0
+
+    def _run(command, **kwargs):
+        nonlocal render_count
+        render_count += 1
+        output_path = Path(command[command.index("--output") + 1])
+        output_path.write_bytes(b"<svg>cached</svg>")
+        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+    monkeypatch.setattr("md2anki.html_renderer.shutil.which", lambda executable: "C:/npm/mmdc.cmd")
+    monkeypatch.setattr("md2anki.html_renderer.subprocess.run", _run)
+
+    source = "graph TD\nA --> B\n"
+    first = MermaidCliRenderer(cache_dir=cache_dir).render_svg(source)
+    second = MermaidCliRenderer(cache_dir=cache_dir).render_svg(source)
+
+    assert first == second == b"<svg>cached</svg>"
+    assert render_count == 1
+    cache_entries = list(cache_dir.iterdir())
+    assert len(cache_entries) == 1
+    assert cache_entries[0].is_file()
+    assert cache_entries[0].suffix == ".svg"
+
+
 def test_math_delimiters_are_normalized_by_renderer(tmp_path: Path):
     renderer = _new_renderer(tmp_path)
     note = FakeParsedNote(

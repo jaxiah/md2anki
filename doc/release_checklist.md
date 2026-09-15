@@ -110,7 +110,7 @@ md2anki --vault-root <VAULT_ROOT> --apply-anki-changes
 ```
 
 - [ ] The full run completes without failures.
-- [ ] `sync_state.json` is updated.
+- [ ] `.md2anki-cache/sync_state.json` is updated.
 - [ ] An unchanged rerun is primarily SKIP operations.
 - [ ] Deck moves preserve scheduling and land in the expected destination decks.
 
@@ -154,7 +154,7 @@ Check, in order:
 
 ### D3. Rebuild Sync State
 
-- Back up the vault, `sync_state.json`, and Anki profile first.
+- Back up the vault, `.md2anki-cache/sync_state.json`, and Anki profile first.
 - Move the existing state file aside rather than permanently deleting it.
 - Run apply on one file and confirm that existing `^anki-*` notes are updated instead of duplicated.
 - Continue with a full apply only after the small verification succeeds.

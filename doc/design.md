@@ -25,7 +25,7 @@ md2anki synchronizes H4-based card blocks from Obsidian-style Markdown into Anki
 - Render Mermaid fenced blocks to static SVG media through the local Mermaid CLI.
 - Synchronize notes through AnkiConnect with ADD, UPDATE, DELETE, and SKIP behavior.
 - Validate exact built-in model field contracts through read-only AnkiConnect queries before any apply-mode writes.
-- Maintain `sync_state.json` for content, deck, source URL, and media tracking.
+- Maintain `.md2anki-cache/sync_state.json` for content, deck, source URL, and media tracking.
 - Write `^anki-<id>` after successful additions and `^noanki` after successful deletions.
 - Provide a read-only dry-run mode and an explicit apply mode.
 
@@ -70,7 +70,7 @@ The system uses four focused components and one procedural orchestrator:
 - Outputs in apply mode:
   - Anki note and deck changes
   - uploaded Anki media
-  - `sync_state.json`
+  - `.md2anki-cache/sync_state.json`
   - Markdown metadata writeback
   - summary counts and aggregated errors
 
@@ -115,7 +115,7 @@ Vault images carry an absolute source path. Generated Mermaid SVGs carry Base64 
 
 ### 3.3 State File
 
-The default state path is `<vault-root>/sync_state.json`.
+The default state path is `<vault-root>/.md2anki-cache/sync_state.json`.
 
 ```json
 {
@@ -230,7 +230,9 @@ Fenced code is protected from math normalization. Anki's built-in MathJax render
 - `MermaidCliRenderer` finds `mmdc` on `PATH` and invokes it with the neutral theme, a white background, and SVG output.
 - An installed Chrome, Edge, or Chromium is preferred when available. Otherwise Mermaid CLI selects its bundled Puppeteer browser.
 - The generated Anki media filename is `md2anki-mermaid-<sha256(source)>.svg`.
-- Equal Mermaid source is rendered once per pipeline run and reuses the same media filename across notes and fields.
+- Rendered SVGs are persisted in the flat `<vault>/.md2anki-cache/mermaid/` directory. The cache key includes the Mermaid source and an internal renderer revision, so unchanged diagrams avoid `mmdc` across pipeline runs while rendering changes invalidate old entries automatically.
+- Equal Mermaid source is rendered once and reuses the same media filename across notes and fields.
+- Cache reads and writes are best-effort. Missing, empty, or inaccessible cache entries fall back to normal rendering, and deleting the cache directory forces regeneration.
 - The SVG bytes are Base64-encoded in `MediaItem` and uploaded through the existing `storeMediaFile` path.
 - Missing prerequisites, invalid Mermaid, timeouts, missing output, and empty output are rendering failures rather than warnings.
 - Normal non-Mermaid fenced blocks remain ordinary highlighted code and do not require `mmdc`.
@@ -337,7 +339,7 @@ Node.js and `@mermaid-js/mermaid-cli` are external runtime prerequisites. `mmdc`
 - The vault name is derived from the vault root directory name.
 - `--asset-root` defaults to `assets` under the vault.
 - `--anki-connect-url` defaults to `http://127.0.0.1:8765`.
-- `--sync-state-file` defaults to `<vault-root>/sync_state.json`.
+- Synchronization state is always stored at `<vault-root>/.md2anki-cache/sync_state.json` by the CLI.
 - `--file` may be repeated. Without it, all `.md` files under the vault are scanned recursively.
 - `--apply-anki-changes` enables writes.
 - `--no-write-back-markdown` disables Markdown writeback in apply mode.

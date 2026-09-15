@@ -10,4 +10,5 @@ manual_mermaid_preview/
 .vscode/
 .claude/
 .codegraph/
+.md2anki-cache/
 README.preview.html
