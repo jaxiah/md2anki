@@ -99,7 +99,15 @@ class AnkiClient:
         self.state["uploaded_media"] = self._uploaded_media
         tmp_file = self.sync_state_file.with_suffix(self.sync_state_file.suffix + ".tmp")
         tmp_file.write_text(json.dumps(self.state, ensure_ascii=False, indent=2), encoding="utf-8")
-        tmp_file.replace(self.sync_state_file)
+        max_attempts = 12
+        for attempt in range(max_attempts):
+            try:
+                tmp_file.replace(self.sync_state_file)
+                return
+            except PermissionError:
+                if attempt >= max_attempts - 1:
+                    raise
+                time.sleep(min(0.05 * (2**attempt), 0.5))
 
     def invoke(self, action: str, **params) -> tuple[bool, Any]:
         if self.is_dry_run():
@@ -205,6 +213,45 @@ class AnkiClient:
 
         return errors
 
+    def validate_existing_note_types(self, rendered_notes) -> list[str]:
+        """Check Anki's actual model before writing changed, existing notes."""
+        if self.is_dry_run():
+            return []
+
+        items = self.state.get("items", {})
+        candidates: list[tuple[int, Any]] = []
+        for rendered in rendered_notes:
+            parsed = getattr(rendered, "parsed", None)
+            note_id = getattr(parsed, "anki_note_id", None)
+            if not note_id or getattr(parsed, "delete_requested", False):
+                continue
+            if items.get(str(note_id), {}).get("content_hash") == self.compute_content_hash(rendered):
+                continue
+            candidates.append((int(note_id), rendered))
+
+        errors: list[str] = []
+        for start in range(0, len(candidates), 100):
+            batch = candidates[start : start + 100]
+            note_ids = [note_id for note_id, _ in batch]
+            success, result = self.invoke("notesInfo", notes=note_ids)
+            if not success or not isinstance(result, list) or len(result) != len(batch):
+                errors.append(f"notesInfo failed while checking note types: {result}")
+                return errors
+
+            for (note_id, rendered), info in zip(batch, result):
+                source = getattr(rendered.parsed, "source_file", "<unknown>")
+                if not isinstance(info, dict) or info.get("noteId") != note_id or not info.get("modelName"):
+                    errors.append(f"cannot verify note type for ^anki-{note_id} ({source}): note not found or model missing")
+                    continue
+                actual_model = info["modelName"]
+                if actual_model != rendered.model_name:
+                    errors.append(
+                        f"note type change is unsupported for ^anki-{note_id} ({source}): "
+                        f"Anki has {actual_model}, Markdown infers {rendered.model_name}. "
+                        "Create a new Markdown note for a different type."
+                    )
+        return errors
+
     def compute_content_hash(self, rendered_note: Any) -> str:
         # hash 仅基于 markdown 语义与媒体引用，不依赖渲染后的 HTML/footer。
         parsed = getattr(rendered_note, "parsed", None)
@@ -248,7 +295,6 @@ class AnkiClient:
         if item is not None:
             item["obsidian_url"] = getattr(rendered_note, "obsidian_url", None)
             item["updated_ts"] = self._now_iso()
-            self.save_state()
         return True, None
 
     @staticmethod

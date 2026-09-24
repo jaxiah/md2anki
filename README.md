@@ -218,7 +218,7 @@ Python uses {{c1::dynamic typing}}, and its standard implementation uses a
 The H4 remains visible as a concise reminder, while this section becomes Back Extra.
 ```
 
-Keep an existing note's inferred type stable. Changing a synchronized Basic note into Cloze, or the reverse, is unsupported because Anki cannot update one note type with the other type's fields. Create a new Markdown block instead when a type change is intentional.
+Keep an existing note's inferred type stable. Before apply mode writes anything, `md2anki` checks the actual Anki type of existing notes whose Markdown content changed and aborts if Basic was changed to Cloze or vice versa. Anki cannot update one note type with the other type's fields. Create a new Markdown block instead when a type change is intentional. Dry-run does not query Anki, so this check runs only in apply mode.
 
 ## Sync Lifecycle
 

@@ -134,6 +134,30 @@ def test_sync_dry_run_has_no_side_effects(tmp_path: Path):
     assert not (tmp_path / "sync_state.json").exists()
 
 
+def test_save_state_retries_transient_permission_error(tmp_path: Path, monkeypatch):
+    client = _new_client(tmp_path, apply_changes=True)
+    client.state["items"]["123"] = {"content_hash": "abc"}
+    real_replace = Path.replace
+    replace_attempts = 0
+    sleep_calls: list[float] = []
+
+    def _flaky_replace(path: Path, target: Path):
+        nonlocal replace_attempts
+        replace_attempts += 1
+        if replace_attempts < 3:
+            raise PermissionError(5, "target is temporarily locked")
+        return real_replace(path, target)
+
+    monkeypatch.setattr(Path, "replace", _flaky_replace)
+    monkeypatch.setattr("md2anki.anki_client.time.sleep", sleep_calls.append)
+
+    client.save_state()
+
+    assert replace_attempts == 3
+    assert len(sleep_calls) == 2
+    assert (tmp_path / "sync_state.json").exists()
+
+
 def test_sync_add_creates_note_and_state(tmp_path: Path):
     client = _new_client(tmp_path, apply_changes=False)
     client.apply_changes = True
@@ -263,11 +287,13 @@ def test_sync_update_uses_model_specific_fields(tmp_path: Path):
 
 def test_finalize_added_cloze_note_uses_text_and_extra_fields(tmp_path: Path):
     client = _new_client(tmp_path, apply_changes=True)
+    client.state["items"]["656"] = {"obsidian_url": None}
     update_payload = {}
     note = FakeRendered(
         parsed=FakeParsed(anki_note_id="656", model_name="Cloze", front_md="Q {{c1::A}}", back_md=""),
         front_html="<p>Q {{c1::A}}</p>",
         back_html_with_footer='<div><a href="obsidian://open">open in Obsidian</a></div>',
+        obsidian_url="obsidian://open",
     )
 
     def _invoke(action, **params):
@@ -276,6 +302,9 @@ def test_finalize_added_cloze_note_uses_text_and_extra_fields(tmp_path: Path):
         return True, None
 
     client.invoke = _invoke
+    client.save_state = lambda: (_ for _ in ()).throw(
+        AssertionError("footer finalization must not save state per note")
+    )
 
     success, error = client.finalize_added_note_url("656", note)
 
@@ -288,6 +317,7 @@ def test_finalize_added_cloze_note_uses_text_and_extra_fields(tmp_path: Path):
             "Back Extra": '<div><a href="obsidian://open">open in Obsidian</a></div>',
         },
     }
+    assert client.state["items"]["656"]["obsidian_url"] == note.obsidian_url
 
 
 def test_content_hash_uses_markdown_semantics_not_rendered_html(tmp_path: Path):

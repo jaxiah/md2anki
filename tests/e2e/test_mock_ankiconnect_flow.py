@@ -650,14 +650,51 @@ def test_unsupported_basic_to_cloze_change_fails_without_replacing_note(tmp_path
         _assert_initial_add(vault_root, server)
         mixed_path = vault_root / "04_mixed_types.md"
         basic_id = int(_note_id_from_section(_read(mixed_path), "Card MixedBasic"))
+        (vault_root / "assets" / "new-diagram.png").write_bytes(b"new diagram")
 
         _replace_in_section(
             mixed_path,
             "Card MixedBasic",
-            lambda section: section.replace("Basic answer.", "Basic {{c1::answer}}."),
+            lambda section: section.replace(
+                "Basic answer.", "Basic {{c1::answer}}.\n\n![[new-diagram.png]]"
+            ),
         )
+        server.state.clear_requests()
         report = _run_apply(vault_root, server)
 
         assert report.failed == 1
         assert server.state.notes[basic_id]["modelName"] == "Basic"
-        assert any("invalid fields for Basic" in error for error in report.errors)
+        assert any(f"^anki-{basic_id}" in error and "Basic" in error and "Cloze" in error for error in report.errors)
+        assert server.state.action_count("notesInfo") >= 1
+        assert server.state.action_count("storeMediaFile") == 0
+        assert server.state.action_count("updateNoteFields") == 0
+        assert server.state.action_count("addNote") == 0
+
+
+def test_unsupported_cloze_to_basic_change_fails_before_writes_without_state(tmp_path: Path):
+    vault_root = tmp_path / "mock_vault"
+    _write_vault(vault_root)
+
+    with MockAnkiConnectServer() as server:
+        _assert_initial_add(vault_root, server)
+        mixed_path = vault_root / "04_mixed_types.md"
+        cloze_id = int(_note_id_from_section(_read(mixed_path), "Card MixedCloze"))
+        _replace_in_section(
+            mixed_path,
+            "Card MixedCloze",
+            lambda section: section.replace("{{c1::velocity}}", "velocity").replace(
+                "{{c2::pressure}}", "pressure"
+            ),
+        )
+        (vault_root / "sync_state.json").unlink()
+        server.state.clear_requests()
+
+        report = _run_apply(vault_root, server)
+
+        assert report.failed == 1
+        assert server.state.notes[cloze_id]["modelName"] == "Cloze"
+        assert any(f"^anki-{cloze_id}" in error and "Cloze" in error and "Basic" in error for error in report.errors)
+        assert server.state.action_count("notesInfo") >= 1
+        assert server.state.action_count("storeMediaFile") == 0
+        assert server.state.action_count("updateNoteFields") == 0
+        assert server.state.action_count("addNote") == 0

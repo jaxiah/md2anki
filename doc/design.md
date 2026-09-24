@@ -25,6 +25,7 @@ md2anki synchronizes H4-based card blocks from Obsidian-style Markdown into Anki
 - Render Mermaid fenced blocks to static SVG media through the local Mermaid CLI.
 - Synchronize notes through AnkiConnect with ADD, UPDATE, DELETE, and SKIP behavior.
 - Validate exact built-in model field contracts through read-only AnkiConnect queries before any apply-mode writes.
+- For existing notes with changed Markdown content, compare the inferred model with `notesInfo.modelName` in batches before any apply-mode writes. Reject type changes and missing notes without changing Anki or sync state.
 - Maintain `.md2anki-cache/sync_state.json` for content, deck, source URL, and media tracking.
 - Write `^anki-<id>` after successful additions and `^noanki` after successful deletions.
 - Provide a read-only dry-run mode and an explicit apply mode.
@@ -116,6 +117,12 @@ Vault images carry an absolute source path. Generated Mermaid SVGs carry Base64 
 ### 3.3 State File
 
 The default state path is `<vault-root>/.md2anki-cache/sync_state.json`.
+
+State writes use a temporary file followed by atomic replacement. Transient
+`PermissionError` failures are retried because cloud-sync clients and file
+indexers can briefly lock the destination on Windows. Final source-footer
+updates are accumulated in memory and saved once per pipeline run rather than
+rewriting the state file after every newly added note.
 
 ```json
 {

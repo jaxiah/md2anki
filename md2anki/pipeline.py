@@ -130,6 +130,12 @@ def run_pipeline(
             report.errors.extend(contract_errors)
             return report
 
+        type_errors = anki_client.validate_existing_note_types(rendered_payloads)
+        if type_errors:
+            report.failed += len(type_errors)
+            report.errors.extend(type_errors)
+            return report
+
         prewarm_result = anki_client.prewarm_media(rendered_payloads, progress_callback=_emit_progress)
         report.failed += prewarm_result.failed
         report.errors.extend(prewarm_result.errors)
@@ -223,6 +229,7 @@ def run_pipeline(
 
         if finalized_bindings:
             rendered_by_anchor: dict[tuple[str | None, int | None], Any] = {}
+            finalized_state_changed = False
             for rendered in rendered_payloads:
                 parsed = getattr(rendered, "parsed", None)
                 rendered_by_anchor[
@@ -260,6 +267,10 @@ def run_pipeline(
                     if fail_fast:
                         break
                 else:
+                    finalized_state_changed = True
                     _emit_progress("sync", 0, 0, getattr(parsed, "h4_heading_pure", None), "footer_finalized")
+
+            if finalized_state_changed:
+                anki_client.save_state()
 
     return report
