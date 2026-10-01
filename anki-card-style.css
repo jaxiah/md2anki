@@ -137,7 +137,15 @@ h3 { font-size: 1.15em; }
 h4 { font-size: 1.05em; }
 
 p {
-  margin: 0.4em 0;
+  margin: 1em 0;
+}
+
+/* Wrap Front or cloze:Text in this container in the Anki card template. */
+.md2anki-front > p:first-child {
+  font-size: 1.2em;
+  font-weight: 700;
+  line-height: 1.4;
+  margin: 0 0 0.9em;
 }
 
 ul,

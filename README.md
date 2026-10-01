@@ -249,6 +249,20 @@ The Mermaid source is rendered by the local `mmdc` prerequisite into a neutral-t
 
 For the matching light/dark card presentation, copy [anki-card-style.css](anki-card-style.css) into the Styling section of both the Anki `Basic` and `Cloze` note types used by these cards. The stylesheet includes theme-aware `.cloze` colors.
 
+Complete Basic and Cloze front and back templates, including local highlight.js code highlighting, are available in [anki-card-templates.md](anki-card-templates.md).
+
+To distinguish the Markdown H4 title from front-side context, wrap the front field in a dedicated container in the Anki card template. The stylesheet makes its first paragraph larger and bold, with extra space below it. Scoping this rule to the front container prevents answer paragraphs from receiving title styling. Existing notes pick up the template and styling changes without resynchronization.
+
+```html
+<!-- Basic: wrap the existing Front field replacement. -->
+<div class="md2anki-front">{{Front}}</div>
+
+<!-- Cloze: wrap Text on both the front and back templates. -->
+<div class="md2anki-front">{{cloze:Text}}</div>
+```
+
+Keep the rest of your templates, including any syntax-highlighting scripts. Basic back templates using `{{FrontSide}}` inherit the front container automatically. If the Basic back template repeats `{{Front}}` directly, wrap that replacement too. Do not wrap `{{Back}}` or `{{Back Extra}}` in this container.
+
 ## Windows Launcher
 
 After installing the package, copy `md2anki.cmd` into the root of an Obsidian vault and double-click it. The launcher uses its own directory as `--vault-root`, runs in apply mode, and shows a compact progress bar followed by the final CRUD summary.
