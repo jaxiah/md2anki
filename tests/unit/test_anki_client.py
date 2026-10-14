@@ -2,6 +2,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
 import requests
 
 from md2anki.anki_client import AnkiClient
@@ -198,6 +199,8 @@ def test_sync_uses_unchanged_media_name_returned_by_older_anki(tmp_path: Path):
             return True, None
         if action == "storeMediaFile":
             return True, params["filename"]
+        if action == "getMediaFilesNames":
+            return True, [media_name]
         if action == "addNote":
             add_payload.update(params["note"])
             return True, 322
@@ -214,6 +217,108 @@ def test_sync_uses_unchanged_media_name_returned_by_older_anki(tmp_path: Path):
 
     assert result.added == 1
     assert add_payload["fields"]["Front"] == f'<img src="{media_name}">'
+
+
+@pytest.mark.parametrize("use_path", [False, True])
+@pytest.mark.parametrize("returned_name", ["Pasted image.png", "pasted image.png"])
+@pytest.mark.parametrize("stored_name", ["Pasted image.png", "pasted image.png"])
+def test_store_media_uses_directory_case(
+    tmp_path: Path, use_path: bool, returned_name: str, stored_name: str
+):
+    client = _new_client(tmp_path, apply_changes=True)
+    calls: list[str] = []
+
+    def _invoke(action, **params):
+        calls.append(action)
+        if action == "storeMediaFile":
+            assert ("path" in params) == use_path
+            return True, returned_name
+        if action == "getMediaFilesNames":
+            import fnmatch
+            assert fnmatch.fnmatchcase(stored_name, params["pattern"])
+            return True, [stored_name]
+        raise AssertionError(action)
+
+    client.invoke = _invoke
+    media = FakeMedia(
+        filename="Pasted image.png",
+        source_ref="Pasted image.png",
+        abs_path="D:/image.png" if use_path else None,
+    )
+
+    ok, error, status, actual = client._store_media(media)
+
+    assert ok and error is None
+    assert actual == stored_name
+    assert status == ("uploaded(path)" if use_path else "uploaded(data)")
+    assert calls == ["storeMediaFile", "getMediaFilesNames"]
+
+
+def test_media_case_lookup_prefers_an_exact_directory_name(tmp_path: Path):
+    client = _new_client(tmp_path, apply_changes=True)
+    client.invoke = lambda action, **params: (True, ["image.png", "Image.png"])
+
+    assert client._canonical_media_filename("Image.png") == ("Image.png", None)
+
+
+def test_media_case_lookup_rejects_ambiguous_case_variants(tmp_path: Path):
+    client = _new_client(tmp_path, apply_changes=True)
+    client.invoke = lambda action, **params: (True, ["image.png", "Image.png"])
+
+    actual, error = client._canonical_media_filename("IMAGE.png")
+
+    assert actual is None
+    assert "2 matching directory entries" in error
+
+
+def test_media_case_query_failure_prevents_note_creation(tmp_path: Path):
+    client = _new_client(tmp_path, apply_changes=True)
+    calls: list[str] = []
+
+    def _invoke(action, **params):
+        calls.append(action)
+        if action == "createDeck":
+            return True, None
+        if action == "storeMediaFile":
+            return True, "Pasted image.png"
+        if action == "getMediaFilesNames":
+            return False, "directory query failed"
+        raise AssertionError(action)
+
+    client.invoke = _invoke
+    note = FakeRendered(
+        parsed=FakeParsed(),
+        media_files=[FakeMedia(filename="Pasted image.png", source_ref="Pasted image.png")],
+    )
+
+    result = client.sync([note])
+
+    assert result.failed == 1
+    assert result.added == 0
+    assert "directory query failed" in result.errors[0]
+    assert "addNote" not in calls
+
+
+def test_media_timeout_recovery_uses_directory_case(tmp_path: Path):
+    client = _new_client(tmp_path, apply_changes=True)
+
+    def _invoke(action, **params):
+        if action == "storeMediaFile":
+            return False, "Read timed out"
+        if action == "retrieveMediaFile":
+            return True, "ZGF0YQ=="
+        if action == "getMediaFilesNames":
+            return True, ["pasted image.png"]
+        raise AssertionError(action)
+
+    client.invoke = _invoke
+    ok, error, status, actual = client._store_media(
+        FakeMedia(filename="Pasted image.png", source_ref="Pasted image.png")
+    )
+
+    assert ok and error is None
+    assert status == "uploaded(verified)"
+    assert actual == "pasted image.png"
 
 
 def test_sync_add_uses_builtin_cloze_model_and_fields(tmp_path: Path):
@@ -544,6 +649,8 @@ def test_media_timeout_then_verify_uploaded_counts_success(tmp_path: Path):
             return False, "Read timed out. (read timeout=30.0)"
         if action == "retrieveMediaFile":
             return True, "R0lGODlh"
+        if action == "getMediaFilesNames":
+            return True, ["big.gif"]
         return True, None
 
     client.invoke = _invoke

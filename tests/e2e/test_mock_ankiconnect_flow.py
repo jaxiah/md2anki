@@ -3,6 +3,7 @@ import json
 import re
 from pathlib import Path
 
+import pytest
 import requests
 
 from md2anki import MermaidCliRenderer, run_pipeline
@@ -467,6 +468,83 @@ ankideck: md2ankiTest::MediaCase
         assert server.state.action_count("storeMediaFile") == 2
         note = next(iter(server.state.notes.values()))
         assert f'<img src="{stored_name}" width="800">' in note["fields"]["Back"]
+
+
+@pytest.mark.parametrize("model_name", ["Basic", "Cloze"])
+@pytest.mark.parametrize("preexisting_media", [False, True])
+def test_media_case_regression_and_cache_reset_repair(
+    tmp_path: Path, model_name: str, preexisting_media: bool
+):
+    vault_root = tmp_path / "mock_vault"
+    assets = vault_root / "assets"
+    assets.mkdir(parents=True)
+    media_name = "Pasted image 20261012205508.png"
+    stored_name = media_name.lower()
+    image_data = b"case-sensitive-image"
+    (assets / media_name).write_bytes(image_data)
+    note_file = vault_root / "media-case.md"
+    front_text = "Front context." if model_name == "Basic" else "Recall {{c1::this image}}."
+    note_file.write_text(
+        f"---\nankideck: md2ankiTest::MediaCase\n---\n\n"
+        f"#### Media case regression\n\n{front_text}\n\n![[{media_name}|800]]\n\n"
+        f"---\n\nAnswer context.\n\n![[{media_name}|400]]\n",
+        encoding="utf-8",
+    )
+    state_file = vault_root / "sync_state.json"
+
+    with MockAnkiConnectServer() as server:
+        server.state.reuse_media_request_case = True
+        if preexisting_media:
+            server.state.media[stored_name] = base64.b64encode(image_data).decode("ascii")
+        first = _run_apply(vault_root, server)
+        assert first.failed == 0 and first.added == 1
+        note_id = next(iter(server.state.notes))
+        note = server.state.notes[note_id]
+        front_field = "Front" if model_name == "Basic" else "Text"
+        back_field = "Back" if model_name == "Basic" else "Back Extra"
+        assert f'<img src="{stored_name}" width="800">' in note["fields"][front_field]
+        assert f'<img src="{stored_name}" width="400">' in note["fields"][back_field]
+
+        note_file.write_text(
+            note_file.read_text(encoding="utf-8").replace("Answer context.", "Updated answer context."),
+            encoding="utf-8",
+        )
+        second = _run_apply(vault_root, server)
+        assert second.failed == 0 and second.updated == 1
+        assert server.state.action_count("storeMediaFile") == 2
+        assert media_name not in note["fields"][front_field]
+        assert media_name not in note["fields"][back_field]
+        state_before = json.loads(state_file.read_text(encoding="utf-8"))
+
+        # Seed the previously broken HTML, then rebuild only local sync state.
+        for field_name in (front_field, back_field):
+            note["fields"][field_name] = note["fields"][field_name].replace(stored_name, media_name)
+        for card_id in note["cards"]:
+            server.state.cards[card_id].update(due=123, ivl=7, reps=3)
+        cards_before = {card_id: dict(server.state.cards[card_id]) for card_id in note["cards"]}
+        markdown_before = note_file.read_text(encoding="utf-8")
+        state_file.unlink()
+
+        repaired = _run_apply(vault_root, server)
+
+        assert repaired.failed == 0 and repaired.updated == 1 and repaired.added == 0
+        assert list(server.state.notes) == [note_id]
+        assert f'<img src="{stored_name}" width="800">' in note["fields"][front_field]
+        assert f'<img src="{stored_name}" width="400">' in note["fields"][back_field]
+        assert {card_id: server.state.cards[card_id] for card_id in note["cards"]} == cards_before
+        assert note_file.read_text(encoding="utf-8") == markdown_before
+        state_after = json.loads(state_file.read_text(encoding="utf-8"))
+        assert state_after["items"][str(note_id)]["content_hash"] == state_before["items"][str(note_id)]["content_hash"]
+        assert "stored_media_names" not in state_after
+        assert server.state.action_count("addNote") == 1
+        assert server.state.action_count("deleteNotes") == 0
+
+        server.state.clear_requests()
+        unchanged = _run_apply(vault_root, server)
+        assert unchanged.failed == 0 and unchanged.updated == 0 and unchanged.skipped == 1
+        assert server.state.action_count("storeMediaFile") == 0
+        assert server.state.action_count("getMediaFilesNames") == 0
+        assert server.state.action_count("updateNoteFields") == 0
 
 
 def test_blank_lines_robustness(tmp_path: Path):

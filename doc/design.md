@@ -283,12 +283,16 @@ Mermaid media names and source references are derived only from the Mermaid sour
 - Load existing deck names with `deckNamesAndIds` in apply mode.
 - Create missing decks with `createDeck`.
 - Upload changed media with `storeMediaFile` before note synchronization.
+- Resolve the upload's returned filename against `getMediaFilesNames` directory entries with a case-insensitive glob. Use the exact directory spelling in HTML image references; do not lowercase every reference or assume the upload return value always reflects disk case. Exact matches take precedence over unique case-insensitive matches. Query failures or ambiguous matches stop the affected note write.
+- Keep resolved media names in memory for the current run only, including the final source-link write after adding a note. Do not add them to the persistent state or content hash.
 - ADD with `addNote`, using the inferred model and its fields: `Basic` with `Front`/`Back`, or `Cloze` with `Text`/`Back Extra`.
 - UPDATE with `updateNoteFields`, using the same model-specific field mapping.
 - Move cards between decks with `notesInfo` and `changeDeck` when `deck_full` changes.
 - DELETE with `deleteNotes`.
 
 Transient connection, timeout, and server errors use the configured retry count and exponential backoff.
+
+Previously incorrect media reference case can be repaired by deleting only `.md2anki-cache/sync_state.json` and synchronizing again. Existing Markdown IDs still target the same Anki notes and cards, so this updates fields without deleting notes or resetting review history. No special repair command or content-hash change is required.
 
 ---
 

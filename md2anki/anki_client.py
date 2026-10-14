@@ -1,3 +1,4 @@
+import glob
 import hashlib
 import html
 import json
@@ -343,6 +344,34 @@ class AnkiClient:
             return False
         return bool(result)
 
+    def _canonical_media_filename(self, filename: str) -> tuple[str | None, str | None]:
+        # Some Anki versions return the requested case when reusing a file on
+        # Windows. Query directory entries instead of trusting that spelling.
+        pattern_parts: list[str] = []
+        for char in filename:
+            lower, upper = char.lower(), char.upper()
+            if lower != upper and len(lower) == len(upper) == 1:
+                pattern_parts.append(f"[{lower}{upper}]")
+            else:
+                pattern_parts.append(glob.escape(char))
+
+        ok, names = self.invoke("getMediaFilesNames", pattern="".join(pattern_parts))
+        if not ok or not isinstance(names, list) or not all(isinstance(name, str) for name in names):
+            return None, f"cannot verify media filename {filename!r}: {names}"
+        if filename in names:
+            return filename, None
+        matches = [name for name in names if name.casefold() == filename.casefold()]
+        if not matches:
+            # Unicode case mappings can contain multiple characters and cannot
+            # always be expressed with a glob character class.
+            ok, names = self.invoke("getMediaFilesNames", pattern="*")
+            if not ok or not isinstance(names, list) or not all(isinstance(name, str) for name in names):
+                return None, f"cannot verify media filename {filename!r}: {names}"
+            matches = [name for name in names if name.casefold() == filename.casefold()]
+        if len(matches) == 1:
+            return matches[0], None
+        return None, f"media filename {filename!r} has {len(matches)} matching directory entries"
+
     def _store_media(self, media: Any) -> tuple[bool, str | None, str, str | None]:
         filename = getattr(media, "filename", None)
         if not filename:
@@ -353,20 +382,38 @@ class AnkiClient:
         if abs_path:
             ok, result = self.invoke("storeMediaFile", filename=filename, path=abs_path)
             if ok:
-                stored_filename = result if isinstance(result, str) and result else filename
+                stored_filename, err = (
+                    self._canonical_media_filename(result)
+                    if isinstance(result, str) and result
+                    else (filename, None)
+                )
+                if err:
+                    return False, err, "failed", None
                 return True, None, "uploaded(path)", stored_filename
             path_error = result
             if self._looks_like_timeout(result) and self._verify_media_uploaded(filename):
-                return True, None, "uploaded(verified)", filename
+                stored_filename, err = self._canonical_media_filename(filename)
+                if err:
+                    return False, err, "failed", None
+                return True, None, "uploaded(verified)", stored_filename
 
         data_payload = getattr(media, "base64_data", None)
         if data_payload:
             ok, result = self.invoke("storeMediaFile", filename=filename, data=data_payload)
             if ok:
-                stored_filename = result if isinstance(result, str) and result else filename
+                stored_filename, err = (
+                    self._canonical_media_filename(result)
+                    if isinstance(result, str) and result
+                    else (filename, None)
+                )
+                if err:
+                    return False, err, "failed", None
                 return True, None, "uploaded(data)", stored_filename
             if self._looks_like_timeout(result) and self._verify_media_uploaded(filename):
-                return True, None, "uploaded(verified)", filename
+                stored_filename, err = self._canonical_media_filename(filename)
+                if err:
+                    return False, err, "failed", None
+                return True, None, "uploaded(verified)", stored_filename
             if path_error is not None:
                 return False, f"path={path_error}; data={result}", "failed", None
             return False, str(result), "failed", None

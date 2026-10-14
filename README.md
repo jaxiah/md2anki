@@ -236,6 +236,10 @@ The generated answer-side field (`Back` or `Back Extra`) includes an `open in Ob
 
 `md2anki` renders standard Markdown, tables, fenced code blocks, inline and display math, Mermaid diagrams, Obsidian wiki links, and wiki images. Math delimiters are normalized for Anki's built-in MathJax support, and media files are uploaded through AnkiConnect.
 
+After uploading media, `md2anki` checks the returned filename against Anki's actual directory entries using `getMediaFilesNames`. HTML image references use the directory entry's exact case, including when an Anki/AnkiConnect version returns the requested uppercase spelling for an existing lowercase file. Existing uppercase media names remain uppercase. Resolved names are reused only within the current run; the Markdown content hash and persistent sync-state format are unchanged.
+
+To repair existing cards with incorrect image filename case, close any running md2anki process, delete only `<vault>/.md2anki-cache/sync_state.json`, and run synchronization again with Anki open. Keep the Markdown `^anki-<id>` metadata: those IDs cause existing notes to be updated in place, preserving their cards and review history. This rebuilds the cache and updates all included notes once. Then sync Anki and its media to your other devices. Ordinary unchanged notes remain skipped on subsequent runs.
+
 Mermaid blocks use the normal Obsidian syntax:
 
 ````markdown

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import fnmatch
 import json
 import re
 import threading
@@ -38,6 +39,7 @@ class MockAnkiConnectState:
     notes: dict[int, dict[str, Any]] = field(default_factory=dict)
     cards: dict[int, dict[str, Any]] = field(default_factory=dict)
     media: dict[str, str] = field(default_factory=dict)
+    reuse_media_request_case: bool = False
     requests: list[dict[str, Any]] = field(default_factory=list)
     next_deck_id: int = 2
     next_note_id: int = 1001
@@ -212,16 +214,24 @@ class _Handler(BaseHTTPRequestHandler):
             return state.add_deck(deck)
 
         if action == "storeMediaFile":
-            # Anki 26.09 lowercases newly-added media names and returns the
-            # actual name. Older Anki versions return the requested name.
-            filename = params["filename"].lower()
+            # Optionally reproduce Anki 26.09's Windows reuse bug: the returned
+            # case can differ from the actual, lowercased directory entry.
+            requested = params["filename"]
+            filename = requested.lower()
             if params.get("data") is not None:
-                state.media[filename] = params["data"]
+                data = params["data"]
             elif params.get("path") is not None:
-                state.media[filename] = base64.b64encode(Path(params["path"]).read_bytes()).decode("ascii")
+                data = base64.b64encode(Path(params["path"]).read_bytes()).decode("ascii")
             else:
-                state.media[filename] = ""
+                data = ""
+            reused = filename in state.media and state.media[filename] == data
+            state.media[filename] = data
+            if reused and state.reuse_media_request_case:
+                return requested
             return filename
+
+        if action == "getMediaFilesNames":
+            return sorted(name for name in state.media if fnmatch.fnmatchcase(name, params.get("pattern", "*")))
 
         if action == "retrieveMediaFile":
             return state.media.get(params["filename"], False)
