@@ -603,10 +603,15 @@ def test_mixed_basic_and_cloze_create_correct_notes_and_cards(tmp_path: Path):
         assert server.state.media["diagram.png"] == base64.b64encode(b"diagram").decode("ascii")
 
 
-def test_mermaid_svg_media_roundtrip_without_real_anki(tmp_path: Path, monkeypatch):
+@pytest.mark.parametrize("source", [
+    "flowchart LR\nA[Markdown] --> B[SVG]\n",
+    "---\ndisplayMode: compact\n---\ngantt\n    title Epochs\n",
+])
+@pytest.mark.parametrize("has_separator", [False, True])
+def test_mermaid_svg_media_roundtrip_without_real_anki(tmp_path: Path, monkeypatch, source, has_separator):
     vault_root = tmp_path / "mock_vault"
     vault_root.mkdir(parents=True, exist_ok=True)
-    source = "flowchart LR\nA[Markdown] --> B[SVG]\n"
+    answer = "\n---\n\nAnswer.\n" if has_separator else ""
     (vault_root / "mermaid.md").write_text(
         f"""---
 ankideck: md2ankiTest::Mermaid
@@ -616,11 +621,16 @@ ankideck: md2ankiTest::Mermaid
 
 ```mermaid
 {source}```
+{answer}
 """,
         encoding="utf-8",
     )
     svg = b'<svg xmlns="http://www.w3.org/2000/svg"><text>mock Mermaid</text></svg>'
-    monkeypatch.setattr(MermaidCliRenderer, "render_svg", lambda self, diagram: svg)
+    def render_svg(self, diagram):
+        assert diagram == source
+        return svg
+
+    monkeypatch.setattr(MermaidCliRenderer, "render_svg", render_svg)
 
     with MockAnkiConnectServer() as server:
         report = _run_apply(vault_root, server)
@@ -634,8 +644,11 @@ ankideck: md2ankiTest::Mermaid
         assert stored_data == base64.b64encode(svg).decode("ascii")
 
         note = next(iter(server.state.notes.values()))
-        assert f'<img src="{filename}" alt="Mermaid diagram">' in note["fields"]["Back"]
-        assert "language-mermaid" not in note["fields"]["Back"]
+        field = "Front" if has_separator else "Back"
+        assert f'<img src="{filename}" alt="Mermaid diagram">' in note["fields"][field]
+        assert "language-mermaid" not in note["fields"][field]
+        if has_separator:
+            assert "Answer." in note["fields"]["Back"]
 
 
 def test_cloze_update_preserves_existing_cards_and_adds_new_ordinal(tmp_path: Path):

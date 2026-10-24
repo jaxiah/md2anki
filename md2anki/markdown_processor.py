@@ -214,6 +214,13 @@ class MarkdownProcessor:
 
         tokens = self.md.parse(content)
         lines_all = content.splitlines()
+        # Code contents are literal, including lines resembling card separators.
+        code_lines = {
+            line_idx
+            for token in tokens
+            if token.type in ("fence", "code_block") and token.map is not None
+            for line_idx in range(*token.map)
+        }
 
         frontmatter: dict[str, Any] = {}
         warnings: list[str] = []
@@ -303,7 +310,7 @@ class MarkdownProcessor:
                 block_lines = lines_all[body_start_line:next_heading_line]
                 sep_idx = -1
                 for idx, line in enumerate(block_lines):
-                    if re.match(r"^[ \t]*---+[ \t]*$", line):
+                    if body_start_line + idx not in code_lines and re.match(r"^[ \t]*---+[ \t]*$", line):
                         sep_idx = idx
                         break
 

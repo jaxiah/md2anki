@@ -186,6 +186,53 @@ answer2
     assert doc.notes[1].front_md == "Q2"
 
 
+@pytest.mark.parametrize("fence", ["```", "~~~~", "````"])
+@pytest.mark.parametrize("language", ["mermaid", "yaml"])
+@pytest.mark.parametrize("cloze", [False, True])
+@pytest.mark.parametrize("has_separator", [False, True])
+def test_separator_ignores_fenced_code(fence, language, cloze, has_separator):
+    heading = "Recall {{c1::epochs}}" if cloze else "Recall epochs"
+    diagram = f"{fence}{language}\n---\ndisplayMode: compact\n---\ngantt\n{fence}"
+    content = f"---\nankideck: Test\n---\n#### {heading}\n\n{diagram}\n"
+    if has_separator:
+        content += "\n---\n\nAnswer.\n"
+    content += "\n#### Next question\nNext answer.\n"
+
+    notes = _new_processor().parse_content(content).notes
+
+    assert len(notes) == 2
+    note = notes[0]
+    assert note.model_name == ("Cloze" if cloze else "Basic")
+    assert note.split_by_separator is has_separator
+    if has_separator or cloze:
+        assert note.front_md == f"{heading}\n\n{diagram}"
+        assert note.back_md == ("Answer." if has_separator else "")
+    else:
+        assert note.front_md == heading
+        assert note.back_md == diagram
+    assert notes[1].back_md == "Next answer."
+
+
+def test_separator_ignores_indented_code():
+    content = "---\nankideck: Test\n---\n#### Question\n\nContext.\n\n    ---\n    example\n\n---\n\nAnswer.\n"
+
+    note = _new_processor().parse_content(content).notes[0]
+
+    assert note.front_md == "Question\n\nContext.\n\n    ---\n    example"
+    assert note.back_md == "Answer."
+    assert note.split_by_separator is True
+
+
+def test_separator_ignores_unclosed_fenced_code():
+    content = "---\nankideck: Test\n---\n#### Question\n\n```yaml\n---\nkey: value\n"
+
+    note = _new_processor().parse_content(content).notes[0]
+
+    assert note.front_md == "Question"
+    assert note.back_md == "```yaml\n---\nkey: value"
+    assert note.split_by_separator is False
+
+
 def test_parse_without_h3_uses_base_deck_only():
     content = """---
 ankideck: Solo
