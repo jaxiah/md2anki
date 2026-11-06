@@ -241,13 +241,15 @@ class HtmlRenderer:
             cache_dir=self.vault_root / ".md2anki-cache" / "mermaid"
         )
         self._mermaid_cache: dict[str, MediaItem] = {}
+        self._image_indexes: dict[Path, dict[str, list[Path]]] = {}
         self.md = MarkdownIt("gfm-like", {"html": True, "breaks": True, "linkify": False})
 
     def render(self, note) -> RenderedNote:
         # front/back 分别渲染，最后统一拼接跳转 footer（指向笔记自身）。
         warnings: list[str] = []
-        front_html, front_media, front_warnings = self._render_markdown(note.front_md)
-        back_html, back_media, back_warnings = self._render_markdown(note.back_md)
+        source_file = getattr(note, "source_file", None)
+        front_html, front_media, front_warnings = self._render_markdown(note.front_md, source_file)
+        back_html, back_media, back_warnings = self._render_markdown(note.back_md, source_file)
         warnings.extend(front_warnings)
         warnings.extend(back_warnings)
 
@@ -269,7 +271,7 @@ class HtmlRenderer:
             obsidian_url=note_url,
         )
 
-    def _render_markdown(self, text: str) -> tuple[str, list[MediaItem], list[str]]:
+    def _render_markdown(self, text: str, source_file: str | None = None) -> tuple[str, list[MediaItem], list[str]]:
         # Mermaid must be protected before wiki-link replacement because its own
         # node syntax may contain double square brackets.
         warnings: list[str] = []
@@ -286,7 +288,7 @@ class HtmlRenderer:
                 if normalized.isdigit():
                     width_attr = f' width="{normalized}"'
 
-            resolved_path, resolve_warnings = self._resolve_image_path(img_ref)
+            resolved_path, resolve_warnings = self._resolve_image_path(img_ref, source_file)
             warnings.extend(resolve_warnings)
 
             if resolved_path is None:
@@ -453,28 +455,39 @@ class HtmlRenderer:
         text = RE_DISPLAY_MATH.sub(lambda m: f"\\\\[{m.group(1)}\\\\]", text)
         return text
 
-    def _resolve_image_path(self, img_ref: str) -> tuple[Path | None, list[str]]:
-        # 解析优先级：显式路径命中 > asset_root 递归按文件名匹配。
-        warnings: list[str] = []
+    def _resolve_image_path(self, img_ref: str, source_file: str | None = None) -> tuple[Path | None, list[str]]:
+        reference = Path(img_ref.replace("\\", "/"))
+        candidates: list[Path] = []
+        if source_file:
+            source_path = Path(source_file)
+            if not source_path.is_absolute():
+                source_path = self.vault_root / source_path
+            candidates.append(source_path.parent / reference)
+        candidates.extend([self.vault_root / reference, self.assets_dir / reference])
+        for candidate in candidates:
+            if candidate.is_file():
+                return candidate, []
 
-        explicit_candidate = self.assets_dir / img_ref
-        if explicit_candidate.exists() and explicit_candidate.is_file():
-            return explicit_candidate, warnings
+        # Build each fallback index lazily once per renderer, not once per image.
+        for root in dict.fromkeys([self.assets_dir, self.vault_root]):
+            matches = self._image_index(root).get(os.path.normcase(reference.name), [])
+            if len(matches) > 1:
+                paths = ", ".join(str(path.relative_to(root)) for path in matches)
+                raise HtmlRenderError(f"Image ambiguous: {img_ref}; matches in {root}: {paths}. Use an explicit path.")
+            if matches:
+                return matches[0], []
+        return None, []
 
-        file_name = Path(img_ref).name
-        matches = sorted(
-            [path for path in self.assets_dir.rglob(file_name) if path.is_file()],
-            key=lambda p: str(p.relative_to(self.assets_dir)).replace("\\", "/"),
-        )
-
-        if not matches:
-            return None, warnings
-
-        if len(matches) > 1:
-            # 同名冲突时保持稳定选择，避免不同机器上行为不一致。
-            warnings.append(f"Image ambiguous: {img_ref}; choose {matches[0].relative_to(self.assets_dir)}")
-
-        return matches[0], warnings
+    def _image_index(self, root: Path) -> dict[str, list[Path]]:
+        if root not in self._image_indexes:
+            index: dict[str, list[Path]] = {}
+            for directory, dirs, files in os.walk(root):
+                dirs[:] = sorted(name for name in dirs if not name.startswith("."))
+                for name in sorted(files):
+                    if not name.startswith("."):
+                        index.setdefault(os.path.normcase(name), []).append(Path(directory) / name)
+            self._image_indexes[root] = index
+        return self._image_indexes[root]
 
     def _build_note_url(self, note: Any) -> str:
         # 将锚点并入 file 参数整体编码，避免在外部 webview 中 fragment 丢失。

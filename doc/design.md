@@ -215,9 +215,12 @@ Only `^anki-*` and `^noanki` are synchronization metadata. `^srs-*` and `^nosrs`
 
 For `![[image.png]]` and `![[image.png|300]]`:
 
-- First try an explicit path under `asset_root`.
-- Otherwise search recursively under `asset_root` by filename.
-- If multiple files match, choose the first path in stable relative-path order and emit a warning.
+- First try paths relative to the source Markdown file, then relative to the vault root.
+- Next try an explicit path under `asset_root`, then search recursively there by filename.
+- Finally search the whole vault by filename, excluding hidden directories and files.
+- Filename fallback requires a unique match at that stage. Multiple matches fail rendering before Anki writes and ask the author to use an explicit path.
+- Build fallback indexes lazily once per renderer instance and pass the source file explicitly, so shared renderers resolve each note in its own directory.
+- The read-only media audit uses the same resolver and reports ambiguous source references without selecting a file.
 - Accept numeric widths in `300` and `300px` forms and render `width="300"`.
 - Read the selected file, encode it, and upload it through AnkiConnect `storeMediaFile`.
 
@@ -392,8 +395,8 @@ Node.js and `@mermaid-js/mermaid-cli` are external runtime prerequisites. `mmdc`
 
 - Fail-fast is enabled by default.
 - With `--no-fail-fast`, note-level failures are aggregated into `errors` and `failed`, and processing continues.
-- Warnings include YAML parse failures, missing images, and ambiguous image matches.
-- Failures include deletion without a note ID, Mermaid CLI/rendering errors, AnkiConnect errors, missing decks or note types, and media-upload failures.
+- Warnings include YAML parse failures and missing images.
+- Failures include ambiguous image matches, deletion without a note ID, Mermaid CLI/rendering errors, AnkiConnect errors, missing decks or note types, and media-upload failures.
 - A failed deck move keeps the previous deck in state so a later run can retry it.
 
 ---

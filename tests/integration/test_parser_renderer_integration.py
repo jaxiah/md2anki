@@ -3,7 +3,9 @@ import os
 from dataclasses import asdict
 from pathlib import Path
 
-from md2anki import HtmlRenderer, MarkdownProcessor
+import pytest
+
+from md2anki import HtmlRenderer, HtmlRenderError, MarkdownProcessor
 
 
 FIXTURE_VAULT = Path(__file__).resolve().parent.parent / "fixtures" / "parser_renderer" / "vault"
@@ -186,17 +188,13 @@ def test_lists_table_link_and_image_rendering_pipeline():
     _dump_case_result("lists_table_link_and_image_rendering_pipeline", doc, [rendered])
 
 
-def test_ambiguous_image_resolution_warns_but_renders():
+def test_ambiguous_image_resolution_fails():
     processor, renderer = _build_pipeline()
     doc = processor.parse_file(FIXTURE_VAULT / "05_ambiguous_image.md")
 
     assert len(doc.notes) == 1
-    rendered = renderer.render(doc.notes[0])
-
-    assert '<img src="dup.png">' in rendered.back_html
-    assert any("Image ambiguous: dup.png" in warning for warning in rendered.warnings)
-
-    _dump_case_result("ambiguous_image_resolution_warns_but_renders", doc, [rendered])
+    with pytest.raises(HtmlRenderError, match="Image ambiguous: dup.png"):
+        renderer.render(doc.notes[0])
 
 
 def test_blank_lines_between_header_and_metadata_are_handled_end_to_end():

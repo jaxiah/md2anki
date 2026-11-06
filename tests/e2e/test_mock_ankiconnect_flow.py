@@ -651,6 +651,51 @@ ankideck: md2ankiTest::Mermaid
             assert "Answer." in note["fields"]["Back"]
 
 
+@pytest.mark.parametrize("cloze", [False, True])
+@pytest.mark.parametrize("reference", ["Vector.png", "official/assets/Vector.png", "HDLBits/official/assets/Vector.png"])
+def test_nested_vault_images_upload_and_update(tmp_path: Path, cloze, reference):
+    vault = tmp_path / "vault"
+    image = vault / "HDLBits/official/assets/Vector.png"
+    image.parent.mkdir(parents=True)
+    image.write_bytes(b"vector")
+    md = vault / "HDLBits/cards.md"
+    heading = "Recall {{c1::vector}}" if cloze else "Vector question"
+    md.write_text(f"---\nankideck: Test\n---\n#### {heading}\n\n![[{reference}|600]]\n\n---\n\n![[{reference}]]\nAnswer.\n", encoding="utf-8")
+    with MockAnkiConnectServer() as server:
+        report = _run_apply(vault, server)
+        assert report.failed == 0
+        assert report.added == 1
+        assert server.state.media["vector.png"] == base64.b64encode(b"vector").decode("ascii")
+        note = next(iter(server.state.notes.values()))
+        front, back = ("Text", "Back Extra") if cloze else ("Front", "Back")
+        assert '<img src="vector.png" width="600">' in note["fields"][front]
+        assert '<img src="vector.png">' in note["fields"][back]
+        request = server.state.last_request_for("storeMediaFile")
+        assert Path(request["params"]["path"]) == image
+        md.write_text(md.read_text(encoding="utf-8").replace("Answer.", "Updated answer."), encoding="utf-8")
+        report = _run_apply(vault, server)
+        assert report.failed == 0
+        assert report.updated == 1
+        assert "Updated answer." in note["fields"][back]
+        assert '<img src="vector.png">' in note["fields"][back]
+
+
+def test_ambiguous_vault_image_stops_before_anki_writes(tmp_path: Path):
+    vault = tmp_path / "vault"
+    for folder in ["A", "B"]:
+        path = vault / folder / "dup.png"
+        path.parent.mkdir(parents=True)
+        path.write_bytes(folder.encode())
+    (vault / "cards.md").write_text("---\nankideck: Test\n---\n#### Question\n\n![[dup.png]]\n", encoding="utf-8")
+    with MockAnkiConnectServer() as server:
+        report = _run_apply(vault, server)
+        assert report.failed == 1
+        assert any("Image ambiguous" in error for error in report.errors)
+        assert all(request["action"] == "deckNamesAndIds" for request in server.state.requests)
+        assert server.state.notes == {}
+        assert server.state.media == {}
+
+
 def test_cloze_update_preserves_existing_cards_and_adds_new_ordinal(tmp_path: Path):
     vault_root = tmp_path / "mock_vault"
     _write_vault(vault_root)

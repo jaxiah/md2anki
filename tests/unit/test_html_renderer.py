@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from md2anki import HtmlRenderer, MermaidCliRenderer, MermaidRenderError
+from md2anki import HtmlRenderer, HtmlRenderError, MermaidCliRenderer, MermaidRenderError
 
 
 @dataclass
@@ -227,7 +227,7 @@ def test_wiki_image_recursive_filename_resolution(tmp_path: Path):
     assert rendered.media_files[0].filename == "a.png"
 
 
-def test_wiki_image_ambiguous_filename_uses_stable_pick_and_warning(tmp_path: Path):
+def test_wiki_image_ambiguous_filename_fails_instead_of_picking(tmp_path: Path):
     renderer = _new_renderer(tmp_path)
     p1 = renderer.assets_dir / "a" / "dup.png"
     p2 = renderer.assets_dir / "z" / "dup.png"
@@ -242,12 +242,86 @@ def test_wiki_image_ambiguous_filename_uses_stable_pick_and_warning(tmp_path: Pa
         back_md="ok",
     )
 
-    rendered = _render_case("wiki_image_ambiguous_filename", renderer, note)
+    with pytest.raises(HtmlRenderError, match="Image ambiguous: dup.png"):
+        renderer.render(note)
 
-    assert '<img src="dup.png">' in rendered.front_html
-    assert len(rendered.media_files) == 1
-    assert any("Image ambiguous: dup.png" in warning for warning in rendered.warnings)
-    assert rendered.media_files[0].abs_path.endswith(str(p1).replace("/", "\\"))
+
+@pytest.mark.parametrize("reference", [
+    "official/assets/vector.png", "./official/assets/vector.png",
+    "../HDLBits/official/assets/vector.png", "HDLBits/official/assets/vector.png",
+    "official\\assets\\vector.png", "vector.png",
+])
+def test_wiki_image_paths_outside_root_assets(tmp_path: Path, reference):
+    renderer = _new_renderer(tmp_path)
+    image = renderer.vault_root / "HDLBits/official/assets/vector.png"
+    image.parent.mkdir(parents=True)
+    image.write_bytes(b"vector")
+    note = FakeParsedNote("HDLBits/cards.md", f"![[{reference}|600]]", f"![[{reference}]]")
+    rendered = renderer.render(note)
+    assert rendered.warnings == []
+    assert '<img src="vector.png" width="600">' in rendered.front_html
+    assert len(rendered.media_files) == 2
+    assert all(Path(media.abs_path).resolve() == image.resolve() for media in rendered.media_files)
+    assert all(media.source_ref == reference for media in rendered.media_files)
+
+
+def test_image_resolution_priority_and_note_context(tmp_path: Path):
+    renderer = _new_renderer(tmp_path)
+    for relative in ["assets/vector.png", "HDLBits/vector.png", "Other/vector.png", "Other/dup.png", "HDLBits/dup.png"]:
+        image = renderer.vault_root / relative
+        image.parent.mkdir(parents=True, exist_ok=True)
+        image.write_bytes(relative.encode())
+    for folder in ["HDLBits", "Other"]:
+        note = FakeParsedNote(f"{folder}/cards.md", "![[vector.png]]", "![[dup.png]]")
+        rendered = renderer.render(note)
+        assert Path(rendered.media_files[0].abs_path) == renderer.vault_root / folder / "vector.png"
+        assert Path(rendered.media_files[1].abs_path) == renderer.vault_root / folder / "dup.png"
+    rendered = renderer.render(FakeParsedNote("cards.md", "![[vector.png]]", ""))
+    assert Path(rendered.media_files[0].abs_path) == renderer.assets_dir / "vector.png"
+
+
+def test_vault_ambiguity_requires_explicit_path(tmp_path: Path):
+    renderer = _new_renderer(tmp_path)
+    for folder in ["A", "B"]:
+        image = renderer.vault_root / folder / "dup.png"
+        image.parent.mkdir()
+        image.write_bytes(folder.encode())
+    with pytest.raises(HtmlRenderError, match="Use an explicit path"):
+        renderer.render(FakeParsedNote("cards.md", "![[dup.png]]", ""))
+    rendered = renderer.render(FakeParsedNote("cards.md", "![[B/dup.png]]", ""))
+    assert base64.b64decode(rendered.media_files[0].base64_data) == b"B"
+
+
+def test_custom_assets_fallback_is_preserved(tmp_path: Path):
+    renderer = HtmlRenderer("vault", tmp_path, asset_root="attachments")
+    image = tmp_path / "attachments/deep/vector.png"
+    image.parent.mkdir(parents=True)
+    image.write_bytes(b"custom")
+    duplicate = tmp_path / "other/vector.png"
+    duplicate.parent.mkdir()
+    duplicate.write_bytes(b"other")
+    rendered = renderer.render(FakeParsedNote("cards.md", "![[vector.png]]", ""))
+    assert Path(rendered.media_files[0].abs_path) == image
+
+
+def test_vault_index_is_reused_and_excludes_hidden_directories(tmp_path: Path, monkeypatch):
+    renderer = _new_renderer(tmp_path)
+    for folder in ["nested", ".md2anki-cache", ".obsidian"]:
+        image = renderer.vault_root / folder / "vector.png"
+        image.parent.mkdir()
+        image.write_bytes(b"image")
+    walk = os.walk
+    scanned = []
+
+    def tracked_walk(root):
+        scanned.append(root)
+        return walk(root)
+
+    monkeypatch.setattr("md2anki.html_renderer.os.walk", tracked_walk)
+    for _ in range(3):
+        rendered = renderer.render(FakeParsedNote("cards.md", "![[vector.png]]", "![[vector.png]]"))
+        assert Path(rendered.media_files[0].abs_path).parent.name == "nested"
+    assert scanned == [renderer.assets_dir, renderer.vault_root]
 
 
 def test_wiki_image_missing_adds_warning_and_placeholder(tmp_path: Path):

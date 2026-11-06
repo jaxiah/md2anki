@@ -240,6 +240,19 @@ After uploading media, `md2anki` checks the returned filename against Anki's act
 
 To repair existing cards with incorrect image filename case, close any running md2anki process, delete only `<vault>/.md2anki-cache/sync_state.json`, and run synchronization again with Anki open. Keep the Markdown `^anki-<id>` metadata: those IDs cause existing notes to be updated in place, preserving their cards and review history. This rebuilds the cache and updates all included notes once. Then sync Anki and its media to your other devices. Ordinary unchanged notes remain skipped on subsequent runs.
 
+Wiki images (`![[image.png|600]]`) are resolved in this order:
+
+1. Paths relative to the source Markdown file, then paths relative to the vault root.
+2. The configured `--asset-root` (default: `assets`), first by path, then recursively by filename.
+3. A unique filename anywhere else in the vault, excluding hidden directories such as `.obsidian` and `.md2anki-cache`.
+
+For example, a note in `HDLBits/` can reference `![[official/assets/Vector.png]]`,
+`![[HDLBits/official/assets/Vector.png]]`, or simply `![[Vector.png]]` if the
+fallback search is unambiguous. Multiple filename matches at a fallback stage fail
+rendering before any Anki write; use an explicit path to choose the intended image.
+Fallback indexes are built lazily and reused within a run. Uploaded HTML uses the
+media basename returned and verified through AnkiConnect, not the vault path.
+
 Mermaid blocks use the normal Obsidian syntax:
 
 ````markdown
@@ -266,6 +279,28 @@ To distinguish the Markdown H4 title from front-side context, wrap the front fie
 ```
 
 Keep the rest of your templates, including any syntax-highlighting scripts. Basic back templates using `{{FrontSide}}` inherit the front container automatically. If the Basic back template repeats `{{Front}}` directly, wrap that replacement too. Do not wrap `{{Back}}` or `{{Back Extra}}` in this container.
+
+### Diagnose missing images
+
+Run the read-only media audit with Anki and AnkiConnect open:
+
+```powershell
+python -m md2anki.media_audit --vault-root "D:\MyVault" --file "notes\example.md" --anki-media-dir "C:\Users\me\AppData\Roaming\Anki2\User 1\collection.media" --report "media-audit.json"
+```
+
+Repeat `--file` to check multiple Markdown files. The audit checks exported H4 notes
+with `ankideck` frontmatter (excluding `^noanki` and pending deletions). It verifies
+source images using the same path-resolution rules as rendering, reads existing note fields via
+`notesInfo`, and checks their actual `<img src>` references against directory entries.
+It distinguishes missing files, case-only mismatches, empty media, differing SHA-256
+content, source images absent from note HTML, and missing or unbound Anki notes.
+Code examples are excluded; remote images are listed but not downloaded.
+
+The optional UTF-8 JSON report contains per-note results, card IDs, file paths,
+actual filename spellings, and hashes. The audit does not upload media, change notes,
+render Mermaid, or read/write sync state. Exit codes: `0` for no detected issues,
+`1` for findings, and `2` for an audit failure. This checks note fields and files,
+not image decoding or images introduced by card templates or CSS.
 
 ## Windows Launcher
 
